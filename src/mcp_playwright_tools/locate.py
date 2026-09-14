@@ -48,6 +48,11 @@ def locate(spot: Spot, target: str, by: str = "css", name: str = "") -> Locator:
     return finder(target)
 
 
+def document(spot: Spot) -> Locator:
+    """Return the root element of the page, or of the frame acted in."""
+    return spot.root.locator(":root")
+
+
 async def existing(spot: Spot, target: str, by: str = "css") -> Locator:
     """Return the first element a caller pointed at.
 

@@ -7,7 +7,7 @@ from collections.abc import Callable
 import pytest
 
 from conftest import Run
-from mcp_playwright_tools import ToolError, Workspace, examine
+from mcp_playwright_tools import ToolError, Workspace, examine, navigate, read
 
 FORM = (
     "<h1>Sign in</h1>"
@@ -135,6 +135,30 @@ def test_what_can_be_done_lists_the_visible_controls(
         "<button> type=submit Cancel",
         "<a> Help",
     ]
+
+
+def test_what_can_be_done_includes_a_control_fixed_on_the_screen(
+    space: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    show('<button id="accept" style="position:fixed;bottom:0">Accept</button>')
+
+    assert run(examine.what_can_i_do(space.browsing())) == (
+        "<button> type=submit #accept Accept"
+    )
+
+
+def test_what_can_be_done_in_a_frame_is_what_the_frame_offers(
+    space: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    show(
+        "<button>Outside</button>"
+        "<iframe id='inner' srcdoc='<button>Inside</button>'></iframe>"
+    )
+    here = space.browsing()
+    run(navigate.use_frame(here, "#inner"))
+    run(read.wait_until(here, "visible", "button"))
+
+    assert run(examine.what_can_i_do(here)) == "<button> type=submit Inside"
 
 
 def test_a_page_with_nothing_to_act_on_says_so(

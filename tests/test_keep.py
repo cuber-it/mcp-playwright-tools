@@ -30,9 +30,9 @@ def test_a_fresh_context_has_no_cookies(space: Workspace, run: Run) -> None:
 
 
 def test_a_cookie_is_set_as_an_object_and_read_back(space: Workspace, run: Run) -> None:
-    assert run(
-        keep.storage(space.browsing(), "cookies", "set", value=json.dumps(COOKIE))
-    ) == ("set 1 cookie(s)")
+    setting = keep.storage(space.browsing(), "cookies", "set", value=json.dumps(COOKIE))
+
+    assert run(setting) == "set 1 cookie(s)"
 
     found = json.loads(run(keep.storage(space.browsing())))
     assert [(item["name"], item["value"]) for item in found] == [("who", "ada")]
@@ -41,9 +41,22 @@ def test_a_cookie_is_set_as_an_object_and_read_back(space: Workspace, run: Run) 
 def test_several_cookies_are_set_as_an_array(space: Workspace, run: Run) -> None:
     both = [COOKIE, {**COOKIE, "name": "lang", "value": "de"}]
 
-    assert run(
-        keep.storage(space.browsing(), "cookies", "set", value=json.dumps(both))
-    ) == ("set 2 cookie(s)")
+    setting = keep.storage(space.browsing(), "cookies", "set", value=json.dumps(both))
+
+    assert run(setting) == "set 2 cookie(s)"
+
+
+def test_more_cookies_than_are_shown_say_how_many_were_left_out(
+    space: Workspace, run: Run
+) -> None:
+    many = [{**COOKIE, "name": f"c{number}"} for number in range(105)]
+    run(keep.storage(space.browsing(), "cookies", "set", value=json.dumps(many)))
+
+    shown = run(keep.storage(space.browsing()))
+
+    kept, note = shown.rsplit("\n", 1)
+    assert note == "[... 5 more]"
+    assert len(json.loads(kept)) == 100
 
 
 def test_clearing_the_cookies_leaves_none(space: Workspace, run: Run) -> None:
@@ -97,6 +110,19 @@ def test_a_local_entry_that_is_not_set_is_named(
     assert (
         run(keep.storage(space.browsing(), "local", "get", "lang")) == "lang is not set"
     )
+
+
+def test_a_large_local_storage_is_cut_and_says_so(
+    space: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    show("<p>x</p>")
+    run(keep.storage(space.browsing(), "local", "set", "big", "x" * 25_000))
+
+    entry = run(keep.storage(space.browsing(), "local", "get", "big"))
+    everything = run(keep.storage(space.browsing(), "local"))
+
+    assert entry.endswith("[... 5000 more characters]")
+    assert everything.endswith("more characters]")
 
 
 def test_clearing_the_local_storage_empties_it(

@@ -7,6 +7,7 @@ import json
 from playwright.async_api import Route
 
 from mcp_playwright_tools.errors import ToolError, attempt, unknown
+from mcp_playwright_tools.output import cut
 from mcp_playwright_tools.pool import Spot
 from mcp_playwright_tools.workspace import Browsing, Workspace
 
@@ -111,7 +112,12 @@ async def _cookies(spot: Spot, action: str, payload: str) -> str:
     """
     if action == "get":
         found = await attempt(spot.context.cookies(), "read the cookies")
-        return json.dumps(found[:MAX_COOKIES], indent=2) if found else "no cookies"
+        if not found:
+            return "no cookies"
+        shown = json.dumps(found[:MAX_COOKIES], indent=2)
+        if len(found) > MAX_COOKIES:
+            shown += f"\n[... {len(found) - MAX_COOKIES} more]"
+        return shown
     if action == "clear":
         await attempt(spot.context.clear_cookies(), "clear the cookies")
         return "cookies cleared"
@@ -140,10 +146,12 @@ async def _local(spot: Spot, action: str, key: str, value: str) -> str:
     if action == "get" and key:
         entry = page.evaluate("k => localStorage.getItem(k)", key)
         found = await attempt(entry, reaching)
-        return str(found) if found is not None else f"{key} is not set"
+        return cut(str(found)) if found is not None else f"{key} is not set"
     if action == "get":
         everything = await attempt(page.evaluate("() => ({...localStorage})"), reaching)
-        return json.dumps(everything, indent=2) if everything else "storage is empty"
+        return (
+            cut(json.dumps(everything, indent=2)) if everything else "storage is empty"
+        )
     if action == "set":
         if not key:
             raise ToolError("setting a local entry needs its key")

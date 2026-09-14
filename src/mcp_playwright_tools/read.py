@@ -8,7 +8,7 @@ from pathlib import Path
 
 from mcp_playwright_tools.boundary import Access
 from mcp_playwright_tools.errors import ToolError, attempt, unknown
-from mcp_playwright_tools.locate import existing, locate
+from mcp_playwright_tools.locate import document, existing, locate
 from mcp_playwright_tools.output import cut, listed
 from mcp_playwright_tools.pool import Spot
 from mcp_playwright_tools.workspace import Browsing
@@ -18,7 +18,7 @@ WAITS = ("visible", "hidden", "url", "load", "response")
 LOAD_STATES = ("load", "domcontentloaded", "networkidle")
 MAX_LINK_TEXT = 80
 LINKS_SCRIPT = (
-    "() => Array.from(document.querySelectorAll('a[href]'))"
+    "root => Array.from(root.ownerDocument.querySelectorAll('a[href]'))"
     ".map(a => ({text: a.innerText.trim(), href: a.href}))"
 )
 
@@ -45,7 +45,8 @@ async def read(
 ) -> str:
     """Read text, the text of every match, markup, an attribute or the links.
 
-    Without a target, text and html are those of the whole page.
+    Without a target, text and html are those of the whole page, or of the
+    frame acted in.
 
     Raises:
         ToolError: There is no such thing to read, nothing matches, or a
@@ -61,7 +62,8 @@ async def read(
     if what == "attribute":
         return await _attribute(spot, target, attribute, by)
     if what == "html" and not target:
-        return cut(await attempt(spot.page.content(), "read the page"))
+        markup = document(spot).evaluate("root => root.outerHTML")
+        return cut(await attempt(markup, "read the page"))
     element = await existing(spot, target or "body", by if target else "css")
     reading = f"read {by}={target!r}"
     if what == "html":
@@ -178,8 +180,8 @@ async def _attribute(spot: Spot, target: str, attribute: str, by: str) -> str:
 
 
 async def _links(spot: Spot) -> str:
-    """Return every link on the page as its text and address, one per line."""
-    found = await attempt(spot.page.evaluate(LINKS_SCRIPT), "list the links")
+    """Return every link in the page or frame acted in, as text and address."""
+    found = await attempt(document(spot).evaluate(LINKS_SCRIPT), "list the links")
     if not found:
         return "no links on this page"
     return listed(

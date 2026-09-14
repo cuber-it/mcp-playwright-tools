@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from mcp_playwright_tools.errors import ToolError, attempt
-from mcp_playwright_tools.locate import describe_one, locate
+from mcp_playwright_tools.locate import describe_one, document, locate
 from mcp_playwright_tools.output import cut, listed
 from mcp_playwright_tools.workspace import Browsing
 
@@ -14,10 +14,12 @@ ATTRIBUTES_SCRIPT = (
     "element => Object.fromEntries("
     "Array.from(element.attributes).map(a => [a.name, a.value]))"
 )
+# Rendered boxes rather than offsetParent: that is null for fixed elements too,
+# and cookie banners and headers are fixed.
 INTERACTIVE_SCRIPT = (
-    "() => Array.from(document.querySelectorAll("
+    "root => Array.from(root.ownerDocument.querySelectorAll("
     "'a[href],button,input,select,textarea,[role],[onclick]'))"
-    ".filter(e => e.offsetParent !== null)"
+    ".filter(e => e.getClientRects().length > 0)"
     ".map(e => ({tag: e.tagName.toLowerCase(), type: e.type || '',"
     " text: (e.innerText || e.value || e.placeholder || '').trim().slice(0, 60),"
     " id: e.id || '', role: e.getAttribute('role') || ''}))"
@@ -65,9 +67,9 @@ async def describe(browsing: Browsing, target: str, by: str = "css") -> dict[str
 
 
 async def what_can_i_do(browsing: Browsing) -> str:
-    """Return the visible things on the page one can act on, one per line."""
-    page = (await browsing.spot()).page
-    found = await attempt(page.evaluate(INTERACTIVE_SCRIPT), "list the controls")
+    """Return the visible things one can act on, in the page or frame acted in."""
+    root = document(await browsing.spot())
+    found = await attempt(root.evaluate(INTERACTIVE_SCRIPT), "list the controls")
     if not found:
         return "nothing to act on here"
     rows = []

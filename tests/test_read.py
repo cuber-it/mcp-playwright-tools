@@ -17,13 +17,13 @@ from mcp_playwright_tools import (
     Picture,
     ToolError,
     Workspace,
+    navigate,
     read,
 )
 from mcp_playwright_tools.boundary import TMP
 from mcp_playwright_tools.grant import GRANT_FILE
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-LATER = "setTimeout(() => {{ {} }}, 200);"
 
 
 def size_of(data: bytes) -> tuple[int, int]:
@@ -33,7 +33,7 @@ def size_of(data: bytes) -> tuple[int, int]:
 
 def later(script: str) -> str:
     """Return a script element that runs a script a moment after the page loaded."""
-    return f"<script>{LATER.format(script)}</script>"
+    return f"<script>setTimeout(() => {{ {script} }}, 200);</script>"
 
 
 def test_the_text_of_the_page_is_read_without_a_target(
@@ -154,6 +154,23 @@ def test_the_links_come_as_text_and_address(
         f"One -> {base}/one",
         f"(no text) -> {base}/two",
     ]
+
+
+def test_links_and_markup_come_from_the_frame_acted_in(
+    space: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    show(
+        "<a href='/outer'>Outer</a>"
+        "<iframe id='inner' srcdoc=\"<a href='/inner'>Inner</a>\"></iframe>"
+    )
+    here = space.browsing()
+    run(navigate.use_frame(here, "#inner"))
+    run(read.wait_until(here, "visible", "a"))
+
+    assert run(read.read(here, what="links")).startswith("Inner -> ")
+    markup = run(read.read(here, what="html"))
+    assert "Inner" in markup
+    assert "Outer" not in markup
 
 
 def test_a_page_without_links_says_so(

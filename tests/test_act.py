@@ -140,9 +140,9 @@ def test_filling_puts_the_value_into_the_field(
 
     run(act.fill(space.browsing(), "Name", "Ada", typed=typed))
 
-    assert run(
-        act.run_javascript(space.browsing(), "document.getElementById('who').value")
-    ) == ("Ada")
+    value = act.run_javascript(space.browsing(), "document.getElementById('who').value")
+
+    assert run(value) == "Ada"
     assert ("key" in logged(space, run)) is typed
 
 
@@ -204,14 +204,14 @@ def test_dragging_drops_one_element_on_the_other(
     assert logged(space, run) == ["dropped"]
 
 
-@pytest.mark.parametrize(("amount", "moved"), [("down", True), ("bottom", True)])
+@pytest.mark.parametrize("amount", ["down", "bottom"])
 def test_scrolling_moves_the_page(
-    space: Workspace, show: Callable[[str], str], run: Run, amount: str, moved: bool
+    space: Workspace, show: Callable[[str], str], run: Run, amount: str
 ) -> None:
     show('<div style="height:5000px">tall</div>')
 
     assert run(act.scroll(space.browsing(), amount)) == f"scrolled {amount}"
-    assert (run(act.run_javascript(space.browsing(), "window.scrollY")) > 0) is moved
+    assert run(act.run_javascript(space.browsing(), "window.scrollY")) > 0
 
 
 def test_scrolling_up_and_to_the_top_return_to_the_start(

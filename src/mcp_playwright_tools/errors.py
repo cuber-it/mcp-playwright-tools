@@ -21,7 +21,7 @@ class OutsideBoundaryError(ToolError):
 
 
 class NotPermittedError(ToolError):
-    """The boundary in force does not permit the action at all."""
+    """No boundary permits the action, such as writing the grant file."""
 
 
 class GrantError(ToolError):
