@@ -1,5 +1,17 @@
 # Changes
 
+## 09b170b
+
+- Grants only for what is dangerous on the machine: `run_javascript` runs
+  without one, `--exec` and the grant's `execute` are gone
+- Uploads come from the working directory and `/tmp`; anything else, `~/.ssh`
+  or `~/.config` included, needs a grant, and the refusal names it
+- `/tmp` is always within reach for reading, writing and uploading, in every
+  mode; screenshots are written there or inside the allowed roots
+- A grant's `--root` widens both the roots and the upload directories
+- The tests keep their temporary directories in `.pytest-tmp` instead of
+  `/tmp`, so the refusals they expect are still refusals
+
 ## 91b4e64
 
 - Version 8.0.0: browser tools as a library without the MCP SDK, the command
