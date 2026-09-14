@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 from typing import Any
 
+from mcp_playwright_tools.boundary import Access
 from mcp_playwright_tools.errors import ToolError, attempt, unknown
 from mcp_playwright_tools.locate import locate
 from mcp_playwright_tools.workspace import Browsing
@@ -147,17 +148,17 @@ async def attach_files(
     """Put files into a file input; several paths are separated by commas.
 
     Relative paths start in the working directory, and every file has to lie
-    where reading may reach.
+    where uploads may come from; this is checked before the browser is asked.
 
     Raises:
-        OutsideBoundaryError: A file lies outside what may be read.
+        OutsideBoundaryError: A file lies outside where uploads may come from.
         ToolError: No file was named, one does not exist, or they could not be
             attached.
     """
     named = [item.strip() for item in paths.split(",") if item.strip()]
     if not named:
         raise ToolError("no file named")
-    files = [browsing.space.resolve(item) for item in named]
+    files = [browsing.space.resolve(item, Access.UPLOAD) for item in named]
     missing = [str(path) for path in files if not path.is_file()]
     if missing:
         raise ToolError(f"no such file: {', '.join(missing)}")
@@ -170,10 +171,7 @@ async def run_javascript(browsing: Browsing, script: str) -> Any:
     """Run JavaScript in the page and return what it gives back.
 
     Raises:
-        NotPermittedError: Scripts are switched off; the message names the
-            grant that switches them on.
         ToolError: The script failed.
     """
-    browsing.space.permit_execute()
     page = (await browsing.spot()).page
     return await attempt(page.evaluate(script), "run the script")

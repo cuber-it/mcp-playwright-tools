@@ -43,14 +43,16 @@ INSTRUCTIONS = (
     "take screenshots, work with tabs, frames, cookies and requests. Every tool "
     "takes context, a name; each name is a browser context of its own with its "
     "own cookies and tabs. Close contexts with the contexts tool when done. "
-    "run_javascript is off unless the host allows it; a refusal names the grant "
+    "Screenshots are written to /tmp or the allowed roots, files are uploaded "
+    "from the working directory or /tmp; anything else is refused with the grant "
     "call a person runs on the host.\n\n"
     "Browser-Werkzeuge: Seiten öffnen, Elemente finden und bedienen, Inhalte "
     "lesen, Bildschirmfotos, Tabs, Frames, Cookies und Anfragen. Jedes Werkzeug "
     "nimmt context, einen Namen; jeder Name ist ein eigener Browser-Kontext mit "
     "eigenen Cookies und Tabs. Wenn fertig, Kontexte mit dem Werkzeug contexts "
-    "schließen. run_javascript ist aus, solange der Host es nicht erlaubt; eine "
-    "Ablehnung nennt den Freigabe-Aufruf, den ein Mensch auf dem Host ausführt."
+    "schließen. Bildschirmfotos gehen nach /tmp oder in die erlaubten Wurzeln, "
+    "hochgeladen wird aus dem Arbeitsverzeichnis oder /tmp; alles andere wird "
+    "mit dem Freigabe-Aufruf abgelehnt, den ein Mensch auf dem Host ausführt."
 )
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -196,14 +198,16 @@ def _boundary_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--working-dir",
         default=str(Path.cwd()),
-        help="Where relative paths start (default: the current directory)",
+        help="Where relative paths start and files are uploaded from "
+        "(default: the current directory)",
     )
     group.add_argument(
         "--allowed-root",
         action="append",
         default=[],
         metavar="PATH",
-        help="An allowed root; repeatable (default: the home directory)",
+        help="Where screenshots may be written besides /tmp; repeatable "
+        "(default: the home directory)",
     )
     group.add_argument(
         "--state-dir",
@@ -214,13 +218,8 @@ def _boundary_arguments(parser: argparse.ArgumentParser) -> None:
         "--mode",
         choices=MODES,
         default=DEFAULT_MODE,
-        help="open ignores the allowed roots, guarded confines writing to them, "
+        help="open lifts every limit, guarded confines writing and uploads, "
         f"strict confines reading too (default: {DEFAULT_MODE})",
-    )
-    group.add_argument(
-        "--exec",
-        action="store_true",
-        help="Let run_javascript run without a grant",
     )
 
 
@@ -266,7 +265,6 @@ def workspace_from_args(args: argparse.Namespace) -> Workspace:
         "working_dir": args.working_dir,
         "allowed_roots": args.allowed_root or [str(Path.home())],
         "mode": args.mode,
-        "execute": args.exec,
         "browser": args.browser,
         "channel": args.channel,
         "headless": not args.headed,

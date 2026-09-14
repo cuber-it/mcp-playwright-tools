@@ -1,4 +1,4 @@
-"""How paths are resolved and checked, scripts permitted, and the workspace built."""
+"""How paths are resolved and checked for reading, writing and uploading."""
 
 from __future__ import annotations
 
@@ -17,20 +17,26 @@ from mcp_playwright_tools import (
     Workspace,
     workspace_from,
 )
-from mcp_playwright_tools.boundary import Access
+from mcp_playwright_tools.boundary import TMP, Access
 from mcp_playwright_tools.grant import GRANT_FILE, Grant, write_grant
 
 
 @pytest.fixture
 def walled(tmp_path: Path) -> Workspace:
-    """Return a guarded workspace confined to ``inside``, scripts off, with grants."""
-    inside = tmp_path / "inside"
-    inside.mkdir()
+    """Return a guarded workspace as a server runs: ``home`` as root, ``work`` in it."""
+    home = tmp_path / "home"
+    work = home / "work"
+    work.mkdir(parents=True)
     return Workspace(
-        working_dir=inside,
-        boundary=Boundary((inside,), "guarded", execute=False),
+        working_dir=work,
+        boundary=Boundary((home,), "guarded", (work,)),
         state_dir=tmp_path / "state",
     )
+
+
+def later() -> float:
+    """Return a moment a minute from now."""
+    return time.time() + 60
 
 
 def test_a_relative_path_starts_in_the_working_directory(walled: Workspace) -> None:
@@ -44,14 +50,18 @@ def test_a_tilde_is_the_home_directory(tmp_path: Path) -> None:
 def test_reading_reaches_outside_the_roots_when_guarded(
     walled: Workspace, tmp_path: Path
 ) -> None:
-    assert walled.resolve("../outside.txt") == tmp_path / "outside.txt"
+    assert walled.resolve("../../outside.html") == tmp_path / "outside.html"
+
+
+def test_writing_reaches_the_whole_root(walled: Workspace, tmp_path: Path) -> None:
+    assert walled.resolve("../shot.png", Access.WRITE) == tmp_path / "home" / "shot.png"
 
 
 def test_writing_outside_the_roots_names_the_grant_that_would_allow_it(
     walled: Workspace, tmp_path: Path
 ) -> None:
     with pytest.raises(OutsideBoundaryError, match="for write") as refused:
-        walled.resolve("../shot.png", Access.WRITE)
+        walled.resolve("../../shot.png", Access.WRITE)
 
     assert f"set --root {tmp_path} --for 1h" in str(refused.value)
 
@@ -66,25 +76,53 @@ def test_a_symlink_inside_does_not_carry_writing_outside(
 
 
 def test_strict_confines_reading_too(walled: Workspace) -> None:
-    walled.boundary = Boundary(walled.boundary.roots, "strict")
+    fence = walled.boundary
+    walled.boundary = Boundary(fence.roots, "strict", fence.uploads)
 
     with pytest.raises(OutsideBoundaryError, match="for read"):
-        walled.resolve("../outside.txt")
+        walled.resolve("../../outside.html")
 
 
-def test_a_grant_lets_writing_reach_an_added_root(
+def test_files_are_uploaded_from_the_working_directory(walled: Workspace) -> None:
+    assert walled.resolve("report.pdf", Access.UPLOAD) == (
+        walled.working_dir / "report.pdf"
+    )
+
+
+def test_an_upload_from_elsewhere_in_the_home_names_the_grant(
     walled: Workspace, tmp_path: Path
 ) -> None:
-    write_grant(walled.state_dir, Grant(time.time() + 60, roots=(tmp_path,)))
+    with pytest.raises(OutsideBoundaryError, match="uploads may come from") as refused:
+        walled.resolve("../token.txt", Access.UPLOAD)
 
-    assert walled.resolve("../shot.png", Access.WRITE) == tmp_path / "shot.png"
+    assert f"set --root {tmp_path / 'home'} --for 1h" in str(refused.value)
+
+
+@pytest.mark.parametrize("mode", ["guarded", "strict"])
+@pytest.mark.parametrize("access", [Access.WRITE, Access.UPLOAD])
+def test_tmp_is_within_reach_without_a_grant(
+    walled: Workspace, mode: str, access: Access
+) -> None:
+    fence = walled.boundary
+    walled.boundary = Boundary(fence.roots, mode, fence.uploads)
+
+    assert walled.resolve(str(TMP / "shot.png"), access) == TMP / "shot.png"
+
+
+def test_a_grant_adds_a_root_and_an_upload_directory(
+    walled: Workspace, tmp_path: Path
+) -> None:
+    write_grant(walled.state_dir, Grant(later(), roots=(tmp_path,)))
+
+    assert walled.resolve("../../a.txt", Access.UPLOAD) == tmp_path / "a.txt"
+    assert walled.resolve("../../a.png", Access.WRITE) == tmp_path / "a.png"
 
 
 def test_a_lapsed_grant_reaches_no_further(walled: Workspace, tmp_path: Path) -> None:
     write_grant(walled.state_dir, Grant(time.time() - 1, roots=(tmp_path,)))
 
     with pytest.raises(OutsideBoundaryError):
-        walled.resolve("../shot.png", Access.WRITE)
+        walled.resolve("../../a.txt", Access.UPLOAD)
 
 
 def test_an_unusable_grant_file_refuses_even_reading(walled: Workspace) -> None:
@@ -104,7 +142,7 @@ def test_the_grant_file_and_its_directory_are_out_of_reach_for_writing(
     space = Workspace(
         working_dir=tmp_path, boundary=Boundary(mode=mode), state_dir=state
     )
-    write_grant(state, Grant(time.time() + 60, execute=True))
+    write_grant(state, Grant(later(), mode="open"))
 
     with pytest.raises(NotPermittedError, match="grant file"):
         space.resolve(str(state / target), Access.WRITE)
@@ -118,33 +156,12 @@ def test_writing_beside_the_state_directory_is_not_mistaken_for_the_grant(
     assert space.resolve("shot.png", Access.WRITE) == tmp_path / "shot.png"
 
 
-def test_switched_off_scripts_are_refused_with_the_grant(walled: Workspace) -> None:
-    with pytest.raises(NotPermittedError, match="set --exec --for 1h"):
-        walled.permit_execute()
-
-
-def test_a_grant_switches_scripts_on(walled: Workspace) -> None:
-    write_grant(walled.state_dir, Grant(time.time() + 60, execute=True))
-
-    assert walled.permit_execute() is None
-
-
-def test_without_a_state_directory_a_refusal_says_grants_need_one(
-    walled: Workspace,
-) -> None:
-    walled.state_dir = None
-
-    with pytest.raises(NotPermittedError, match="--state-dir"):
-        walled.permit_execute()
-
-
 def test_the_configuration_is_read(tmp_path: Path) -> None:
     space = workspace_from(
         {
             "working_dir": str(tmp_path),
             "allowed_roots": [str(tmp_path)],
             "mode": "strict",
-            "execute": False,
             "state_dir": str(tmp_path / "state"),
             "browser": "firefox",
             "channel": "beta",
@@ -155,12 +172,12 @@ def test_the_configuration_is_read(tmp_path: Path) -> None:
     )
 
     assert space.working_dir == tmp_path
-    assert space.boundary == Boundary((tmp_path,), "strict", execute=False)
+    assert space.boundary == Boundary((tmp_path,), "strict", (tmp_path,))
     assert space.state_dir == tmp_path / "state"
     assert space.pool.settings == Settings("firefox", "beta", False, 5.0, 0.0)
 
 
-def test_an_empty_configuration_takes_the_defaults(
+def test_an_empty_configuration_uploads_from_the_current_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -168,7 +185,7 @@ def test_an_empty_configuration_takes_the_defaults(
     space = workspace_from({})
 
     assert space.working_dir == tmp_path.resolve()
-    assert space.boundary == Boundary()
+    assert space.boundary == Boundary((), "guarded", (tmp_path.resolve(),))
     assert space.state_dir is None
     assert space.pool.settings == Settings()
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from mcp import Client
@@ -128,9 +129,11 @@ def test_a_script_result_arrives_as_json_text(
 
 
 def test_a_refusal_arrives_with_the_grant_that_lifts_it(
-    fenced: Workspace, run: Run
+    fenced: Workspace, run: Run, tmp_path: Path
 ) -> None:
-    answer = called(fenced, run, "run_javascript", {"script": "1"})
+    arguments = {"target": "#up", "paths": "../token.txt"}
+
+    answer = called(fenced, run, "attach_files", arguments)
 
     assert answer.is_error
-    assert "set --exec --for 1h" in answer.content[0].text
+    assert f"set --root {tmp_path} --for 1h" in answer.content[0].text

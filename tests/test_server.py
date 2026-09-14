@@ -84,7 +84,6 @@ def test_the_workspace_carries_the_boundary_arguments(tmp_path: Path) -> None:
             str(tmp_path),
             "--mode",
             "strict",
-            "--exec",
             "--state-dir",
             str(tmp_path / "state"),
         ]
@@ -92,7 +91,7 @@ def test_the_workspace_carries_the_boundary_arguments(tmp_path: Path) -> None:
 
     space = app.workspace_from_args(args)
 
-    assert space.boundary == Boundary((tmp_path,), "strict", execute=True)
+    assert space.boundary == Boundary((tmp_path,), "strict", (tmp_path,))
     assert space.state_dir == tmp_path / "state"
 
 
@@ -118,12 +117,12 @@ def test_the_workspace_carries_the_browser_arguments(tmp_path: Path) -> None:
     assert settings == Settings("firefox", "beta", False, 5.0, 0.0)
 
 
-def test_by_default_the_home_is_the_root_scripts_are_off_and_grants_are_kept(
+def test_by_default_the_home_is_the_root_and_uploads_come_from_the_working_dir(
     tmp_path: Path,
 ) -> None:
     space = app.workspace_from_args(app.parse(["--working-dir", str(tmp_path)]))
 
-    assert space.boundary == Boundary((Path.home().resolve(),), "guarded", False)
+    assert space.boundary == Boundary((Path.home().resolve(),), "guarded", (tmp_path,))
     assert space.state_dir == Path(DEFAULT_STATE_DIR).expanduser().resolve()
     assert space.pool.settings == Settings()
 
@@ -212,12 +211,15 @@ def test_the_server_carries_its_instructions(tmp_path: Path) -> None:
 
 def test_a_refusal_keeps_its_reason(tmp_path: Path, run: Run) -> None:
     """The SDK blanks a crash but carries its own ToolError through."""
+    work = tmp_path / "work"
+    work.mkdir()
     space = Workspace(
-        working_dir=tmp_path, boundary=Boundary(execute=False), state_dir=tmp_path
+        working_dir=work, boundary=Boundary(uploads=(work,)), state_dir=tmp_path
     )
+    arguments = {"target": "#up", "paths": "../token.txt"}
 
     with pytest.raises(exceptions.ToolError) as refused:
-        run(app.build(space).call_tool("run_javascript", {"script": "1"}))
+        run(app.build(space).call_tool("attach_files", arguments))
 
     assert not isinstance(refused.value, exceptions.UnexpectedToolError)
-    assert "set --exec --for 1h" in str(refused.value)
+    assert f"set --root {tmp_path} --for 1h" in str(refused.value)

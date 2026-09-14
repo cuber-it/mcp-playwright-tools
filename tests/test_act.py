@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -9,14 +10,13 @@ import pytest
 
 from conftest import Run
 from mcp_playwright_tools import (
-    Boundary,
-    NotPermittedError,
     OutsideBoundaryError,
     ToolError,
     Workspace,
     act,
     read,
 )
+from mcp_playwright_tools.boundary import TMP
 
 # Every event on the element is written into #log, so a test reads what happened.
 RECORDER = (
@@ -260,14 +260,29 @@ def test_attaching_a_file_that_does_not_exist_names_it(
         run(act.attach_files(space.browsing(), "#up", "gone.txt"))
 
 
-def test_attaching_a_file_outside_strict_roots_is_refused(
+def test_a_file_from_outside_the_working_directory_is_refused_before_the_browser(
     fenced: Workspace, run: Run, tmp_path: Path
 ) -> None:
-    fenced.boundary = Boundary(fenced.boundary.roots, "strict")
-    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+    (tmp_path / "token.txt").write_text("secret", encoding="utf-8")
 
-    with pytest.raises(OutsideBoundaryError, match="for read"):
-        run(act.attach_files(fenced.browsing(), "#up", "../secret.txt"))
+    with pytest.raises(OutsideBoundaryError, match="uploads may come from"):
+        run(act.attach_files(fenced.browsing("never-opened"), "#up", "../token.txt"))
+
+    assert "never-opened" not in fenced.pool.sessions()
+
+
+def test_a_file_from_tmp_is_attached_without_a_grant(
+    fenced: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    upload = TMP / f"mcp-playwright-tools-{uuid.uuid4().hex}.txt"
+    upload.write_text("from tmp", encoding="utf-8")
+    show(RECORDER + '<input type="file" id="up" onchange="note(this.files[0].name)">')
+    try:
+        run(act.attach_files(fenced.browsing(), "#up", str(upload)))
+    finally:
+        upload.unlink()
+
+    assert logged(fenced, run) == [upload.name]
 
 
 def test_a_script_gives_back_what_it_returns(
@@ -292,10 +307,9 @@ def test_a_script_that_fails_is_reported(
         run(act.run_javascript(space.browsing(), "nowhere.at.all"))
 
 
-def test_switched_off_scripts_are_refused_before_the_browser_is_asked(
-    fenced: Workspace, run: Run
+def test_a_script_runs_without_a_grant_where_the_machine_is_fenced(
+    fenced: Workspace, show: Callable[[str], str], run: Run
 ) -> None:
-    with pytest.raises(NotPermittedError, match="set --exec --for 1h"):
-        run(act.run_javascript(fenced.browsing("never-opened"), "1"))
+    show("<p>x</p>")
 
-    assert "never-opened" not in fenced.pool.sessions()
+    assert run(act.run_javascript(fenced.browsing(), "1 + 1")) == 2

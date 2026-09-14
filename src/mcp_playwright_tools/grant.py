@@ -6,12 +6,12 @@ The server reads it at every check, so a grant takes effect at the next tool
 call and lapses when its time is up, without a restart. Refusals name the call
 that would lift them: ``scripts/grant.sh`` in a checkout, the module otherwise.
 
-A grant changes the configured boundary in up to three ways:
+A grant changes the configured boundary in up to two ways:
 
 - ``mode`` replaces the mode.
-- ``roots`` are added to the configured roots. Without configured roots there
-  is no limit, and a grant does not introduce one.
-- ``execute`` switches ``run_javascript`` on or off.
+- ``roots`` are added to the configured roots and to the upload directories.
+  Where none are configured there is no limit, and a grant does not introduce
+  one.
 
 Every grant has an end; lasting changes belong in the server's configuration.
 A grant file that cannot be used stops every check.
@@ -47,14 +47,12 @@ class Grant:
     Attributes:
         until: Unix time the grant lapses at.
         mode: Mode used instead of the configured one, or None to keep it.
-        roots: Roots added to the configured ones.
-        execute: Whether scripts run, or None to keep the setting.
+        roots: Directories added to the configured roots and upload directories.
     """
 
     until: float
     mode: str | None = None
     roots: tuple[Path, ...] = ()
-    execute: bool | None = None
 
     @classmethod
     def from_file(cls, text: str, where: Path) -> Grant:
@@ -69,17 +67,14 @@ class Grant:
                 until=float(data["until"]),
                 mode=data.get("mode"),
                 roots=tuple(Path(root) for root in data.get("roots", [])),
-                execute=data.get("execute"),
             )
         except (ValueError, TypeError, KeyError, AttributeError) as err:
             raise GrantError(_unusable(where, f"not a grant: {err!r}")) from err
-        usable = (
-            (grant.mode is None or grant.mode in MODES)
-            and isinstance(grant.execute, bool | None)
-            and all(root.is_absolute() for root in grant.roots)
+        usable = (grant.mode is None or grant.mode in MODES) and all(
+            root.is_absolute() for root in grant.roots
         )
         if not usable:
-            raise GrantError(_unusable(where, "unknown mode, execute or relative root"))
+            raise GrantError(_unusable(where, "unknown mode or relative root"))
         return grant
 
     def to_file(self) -> str:
@@ -89,18 +84,16 @@ class Grant:
                 "until": self.until,
                 "mode": self.mode,
                 "roots": [str(root) for root in self.roots],
-                "execute": self.execute,
             },
             indent=2,
         )
 
     def applied(self, base: Boundary) -> Boundary:
         """Return the boundary this grant makes of the configured one."""
-        added = tuple(root for root in self.roots if root not in base.roots)
         return Boundary(
-            roots=base.roots + added if base.roots else (),
+            roots=_added(base.roots, self.roots),
             mode=self.mode or base.mode,
-            execute=base.execute if self.execute is None else self.execute,
+            uploads=_added(base.uploads, self.roots),
         )
 
     def describe(self, now: float) -> str:
@@ -110,11 +103,19 @@ class Grant:
             changes.append(f"mode {self.mode}")
         if self.roots:
             changes.append("roots " + ", ".join(str(root) for root in self.roots))
-        if self.execute is not None:
-            changes.append(f"scripts {'on' if self.execute else 'off'}")
         left = int(self.until - now)
         holds = f"lapses in {_span(left)}" if left > 0 else "has lapsed"
         return f"grant: {'; '.join(changes)}; {holds}"
+
+
+def _added(configured: tuple[Path, ...], granted: tuple[Path, ...]) -> tuple[Path, ...]:
+    """Return the configured directories with the granted ones added.
+
+    None configured means no limit, and a grant does not introduce one.
+    """
+    if not configured:
+        return ()
+    return configured + tuple(root for root in granted if root not in configured)
 
 
 def grant_file(state_dir: Path) -> Path:

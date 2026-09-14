@@ -1,17 +1,16 @@
-"""How far the tools may reach: the roots, the mode, and whether scripts run.
+"""How far the tools may reach on the machine: the roots, the uploads, the mode.
 
 This is the one place that decides. A tool names what it is about to do with a
 path, and the boundary answers. It knows nothing about the tools.
 
-How far the roots reach depends on the mode:
+- Reading covers pages opened from disk. ``guarded`` lets it go anywhere,
+  ``strict`` confines it to the roots.
+- Writing covers screenshots stored in a file, confined to the roots.
+- Uploading hands a file to a web page, which can send it anywhere. It is
+  confined to the upload directories.
 
-- ``open`` ignores them.
-- ``guarded`` lets reading go anywhere and confines writing to them.
-- ``strict`` confines reading as well.
-
-Reading covers files handed to a page and pages opened from disk, writing
-covers screenshots stored in a file. Empty roots mean no limit in every mode.
-Whether JavaScript may be run in a page is a separate setting.
+``open`` lifts every limit, and ``/tmp`` is always within reach. Empty roots
+or empty upload directories mean no limit for what they confine.
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ from mcp_playwright_tools.errors import ToolError
 
 MODES = ("open", "guarded", "strict")
 DEFAULT_MODE = "guarded"
+TMP = Path("/tmp")
 
 
 class Access(StrEnum):
@@ -31,21 +31,23 @@ class Access(StrEnum):
 
     READ = "read"
     WRITE = "write"
+    UPLOAD = "upload"
 
 
 @dataclass(frozen=True)
 class Boundary:
-    """The roots the tools are confined to, how far that reaches, and scripts.
+    """Where reading, writing and uploading may reach, and how far that holds.
 
     Attributes:
-        roots: Directories the tools are confined to, empty for no limit.
-        mode: How far the roots reach, one of :data:`MODES`.
-        execute: Whether JavaScript may be run in a page.
+        roots: Directories writing, and in ``strict`` reading, is confined to;
+            empty for no limit.
+        mode: How far the limits reach, one of :data:`MODES`.
+        uploads: Directories files may be uploaded from; empty for no limit.
     """
 
     roots: tuple[Path, ...] = ()
     mode: str = DEFAULT_MODE
-    execute: bool = True
+    uploads: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         """Refuse a mode that does not exist.
@@ -58,8 +60,17 @@ class Boundary:
 
     def admits(self, resolved: Path, access: Access = Access.READ) -> bool:
         """Say whether this access may reach a resolved path."""
-        if not self.roots or self.mode == "open":
+        if self.mode == "open" or _within(resolved, (TMP,)):
             return True
+        if access is Access.UPLOAD:
+            return not self.uploads or _within(resolved, self.uploads)
         if self.mode == "guarded" and access is Access.READ:
             return True
-        return any(resolved == root or root in resolved.parents for root in self.roots)
+        return not self.roots or _within(resolved, self.roots)
+
+
+def _within(path: Path, directories: tuple[Path, ...]) -> bool:
+    """Say whether a path is one of the directories or lies below one."""
+    return any(
+        path == directory or directory in path.parents for directory in directories
+    )

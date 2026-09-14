@@ -1,10 +1,10 @@
-"""Raise or lower the boundary of a running mcp-playwright-tools server.
+"""Widen or narrow the boundary of a running mcp-playwright-tools server.
 
 A person on the host runs this, with the interpreter the server runs with. In a
 checkout ``scripts/grant.sh`` does that:
 
-    scripts/grant.sh set --exec --for 30m
-    scripts/grant.sh set --root /opt/shots --for 2h
+    scripts/grant.sh set --root ~/Downloads --for 30m
+    scripts/grant.sh set --mode open --for 15m
     scripts/grant.sh show
     scripts/grant.sh reset
 
@@ -57,7 +57,7 @@ def _parser() -> argparse.ArgumentParser:
     """Return the parser for the program's arguments."""
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Raise or lower the boundary of an mcp-playwright-tools server "
+        description="Widen or narrow the boundary of an mcp-playwright-tools server "
         "for a limited time.",
     )
     parser.add_argument(
@@ -76,14 +76,11 @@ def _parser() -> argparse.ArgumentParser:
         "--mode", choices=MODES, help="mode to use instead of the configured one"
     )
     setting.add_argument(
-        "--root", action="append", default=[], metavar="PATH", help="add a root"
-    )
-    setting.add_argument(
-        "--exec",
-        dest="execute",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="switch run_javascript on or off",
+        "--root",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="add a root and an upload directory",
     )
     setting.set_defaults(command=_set)
     commands.add_parser("show", help="show the grant").set_defaults(command=_show)
@@ -98,16 +95,13 @@ def _set(state_dir: Path, args: argparse.Namespace) -> str:
         GrantError: It changes nothing, the duration is unusable, or it cannot
             be written.
     """
-    if args.mode is None and not args.root and args.execute is None:
-        raise GrantError(
-            "a grant has to change something: give --mode, --root, --exec or --no-exec"
-        )
+    if args.mode is None and not args.root:
+        raise GrantError("a grant has to change something: give --mode or --root")
     now = time.time()
     grant = Grant(
         until=now + parse_duration(args.duration),
         mode=args.mode,
         roots=tuple(Path(root).expanduser().resolve() for root in args.root),
-        execute=args.execute,
     )
     where = write_grant(state_dir, grant)
     return f"{grant.describe(now)}; written to {where}"

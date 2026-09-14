@@ -315,12 +315,14 @@ def _doing(space: Workspace) -> list[Tool]:
         """Put files from this machine into a file input, as a user would.
 
         paths holds one path or several separated by commas; relative ones
-        start in the server's working directory. The files have to lie where
-        the server may read.
+        start in the server's working directory. Files are uploaded from the
+        working directory and /tmp; anything else is refused with the grant a
+        person runs on the host.
 
         Legt Dateien von diesem Rechner in ein Datei-Eingabefeld, wie beim
         Hochladen. Mehrere Pfade werden durch Kommas getrennt; relative gelten
-        ab dem Arbeitsverzeichnis des Servers.
+        ab dem Arbeitsverzeichnis des Servers. Hochgeladen wird aus dem
+        Arbeitsverzeichnis und /tmp, alles andere braucht eine Freigabe.
 
         Stichworte: Datei hochladen, anhängen, Upload, Dateiauswahl.
         """
@@ -329,14 +331,12 @@ def _doing(space: Workspace) -> list[Tool]:
     async def run_javascript(script: str, context: str = DEFAULT_CONTEXT) -> Any:
         """Run JavaScript in the page and return what it gives back.
 
-        The last resort when no other tool fits; it runs with the page's own
-        rights, also in a logged-in session. Off unless the host allows it: a
-        refusal names the grant a person runs on the host.
+        For whatever no other tool covers. It runs with the page's own rights,
+        also in a logged-in session, and hands back what the script returns.
 
-        Führt JavaScript in der Seite aus und gibt das Ergebnis zurück. Letzter
-        Ausweg, wenn kein anderes Werkzeug passt; läuft mit den Rechten der
-        Seite. Aus, solange der Host es nicht erlaubt; eine Ablehnung nennt die
-        Freigabe, die ein Mensch auf dem Host ausführt.
+        Führt JavaScript in der Seite aus und gibt das Ergebnis zurück, für
+        alles, was kein anderes Werkzeug abdeckt. Läuft mit den Rechten der
+        Seite.
 
         Stichworte: JavaScript ausführen, Skript, Konsole, im Browser ausführen.
         """
@@ -394,8 +394,8 @@ def _reading(space: Workspace) -> list[Tool]:
 
         Without target the visible part of the page is taken, with full=true
         the whole page; name an element to take only that. With save_to the
-        picture is written to that file instead and the path comes back;
-        writing has to be allowed there.
+        picture is written to that file instead and the path comes back; files
+        go to /tmp or the allowed roots, the home directory by default.
 
         Macht ein Bildschirmfoto und zeigt es als Bild: den sichtbaren Teil,
         mit full=true die ganze Seite oder nur ein Element. Mit save_to wird es

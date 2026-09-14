@@ -1,7 +1,7 @@
 """What the tools share: the browser, the working directory, the boundary.
 
-Every path a tool touches, a file handed to a page, a page opened from disk, a
-screenshot to be written, is resolved here and checked against the boundary in
+Every path a tool touches, a page opened from disk, a screenshot to be written,
+a file to be uploaded, is resolved here and checked against the boundary in
 force. No tool checks a path on its own. The boundary in force is the
 configured one as a grant changes it (:mod:`mcp_playwright_tools.grant`); the
 grant file itself is out of every tool's reach for writing.
@@ -79,24 +79,16 @@ class Workspace:
                 )
         if not self.current().admits(resolved, access):
             nearest = resolved if resolved.is_dir() else resolved.parent
+            limit = (
+                "the directories uploads may come from"
+                if access is Access.UPLOAD
+                else f"the allowed roots for {access}"
+            )
             raise OutsideBoundaryError(
-                f"outside the allowed roots for {access}: {resolved}; "
+                f"outside {limit}: {resolved}; "
                 + hint(self.state_dir, f"--root {nearest}")
             )
         return resolved
-
-    def permit_execute(self) -> None:
-        """Check that JavaScript may be run in a page.
-
-        Raises:
-            NotPermittedError: Scripts are switched off. The message names the
-                grant that would switch them on.
-            GrantError: A grant file is there but cannot be used.
-        """
-        if not self.current().execute:
-            raise NotPermittedError(
-                "running JavaScript is switched off; " + hint(self.state_dir, "--exec")
-            )
 
 
 @dataclass(frozen=True)
@@ -131,9 +123,9 @@ class Browsing:
 def workspace_from(config: dict[str, Any]) -> Workspace:
     """Build the workspace from a configuration mapping.
 
-    The boundary is read from ``allowed_roots``, ``mode`` and ``execute``, the
-    browser from ``browser``, ``channel``, ``headless``, ``timeout`` and
-    ``idle``.
+    The boundary is read from ``allowed_roots`` and ``mode``; files are uploaded
+    from ``working_dir``. The browser is read from ``browser``, ``channel``,
+    ``headless``, ``timeout`` and ``idle``.
 
     Raises:
         ToolError: ``working_dir`` is not a directory, or a setting is unusable.
@@ -150,9 +142,7 @@ def workspace_from(config: dict[str, Any]) -> Workspace:
         working_dir=working,
         pool=BrowserPool(Settings.read(config)),
         boundary=Boundary(
-            roots,
-            str(config.get("mode", DEFAULT_MODE)),
-            bool(config.get("execute", True)),
+            roots, str(config.get("mode", DEFAULT_MODE)), uploads=(working,)
         ),
         state_dir=Path(str(state)).expanduser().resolve() if state else None,
     )

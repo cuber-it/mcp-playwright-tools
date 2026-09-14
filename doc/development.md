@@ -30,7 +30,9 @@ silenced.
 
 The tests need no network beyond the loopback interface: pages come from a
 small site and the authentication tests ask a stand-in authorization server,
-both in `tests/loopback.py`. One browser
+both in `tests/loopback.py`. Temporary directories go to `.pytest-tmp` rather
+than `/tmp`, which the boundary always admits; there a refusal a test expects
+would not happen. One browser
 serves the whole run on one event loop; a few tests start a browser of their
 own, where stopping and starting it is what they check.
 
@@ -61,7 +63,7 @@ test suite passes from it.
 src/mcp_playwright_tools/
   __init__.py        public names of the library
   errors.py          ToolError and its subclasses, Playwright failures as refusals
-  boundary.py        roots, mode, scripts: what may be reached
+  boundary.py        roots, upload directories, mode: what may be reached
   grant.py           reading and writing grants
   workspace.py       the shared state; every path check happens here
   pool.py            the browser, named contexts, tabs, the idle sweep

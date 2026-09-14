@@ -13,9 +13,10 @@ the Model Context Protocol.
   context with its own cookies, storage and tabs, closed when nobody has used
   it for a while; the browser stops with the last one.
 - **A screenshot arrives as a picture**, an image content block.
-- **Boundary**: files handed to a page may be read anywhere, screenshots are
-  written inside the allowed roots, `run_javascript` is off. A person on the
-  host widens or narrows that for a limited time with a grant.
+- **Boundary**: nothing inside the browser needs a permission. Screenshots are
+  written inside the allowed roots and `/tmp`, files are uploaded from the
+  working directory and `/tmp`; a person on the host widens that for a limited
+  time with a grant.
 - **Server** over stdio or streamable HTTP with the MCP SDK, protocol revision
   2026-07-28, OAuth for HTTP.
 
@@ -118,19 +119,20 @@ A value that is not allowed is refused with the allowed ones named.
 
 ## Boundary and grants
 
-| Mode | Reading files (`attach_files`, `file:` pages) | Writing (`screenshot` with `save_to`) |
-|---|---|---|
-| `open` | anywhere | anywhere |
-| `guarded` (default) | anywhere | inside the allowed roots |
-| `strict` | inside the allowed roots | inside the allowed roots |
+Everything the tools do inside the browser is free, `run_javascript` included.
+Three things reach the machine the browser runs on:
 
-`run_javascript` is a switch of its own, off unless the server starts with
-`--exec`. A refusal names the grant that lifts it, to be run by a person on
-the host:
+| Access | Tools | Without a grant (`guarded`) |
+|---|---|---|
+| reading | `open_url` with a `file:` address | anywhere |
+| writing | `screenshot` with `save_to` | inside the allowed roots and `/tmp` |
+| uploading | `attach_files` | from the working directory and `/tmp` |
+
+`strict` confines reading to the roots as well, `open` lifts every limit. A
+refusal names the grant that lifts it, to be run by a person on the host:
 
 ```bash
-scripts/grant.sh set --exec --for 30m
-scripts/grant.sh set --root /opt/shots --for 2h
+scripts/grant.sh set --root ~/Downloads --for 30m
 scripts/grant.sh show
 scripts/grant.sh reset
 ```
@@ -146,11 +148,10 @@ Details in
 | `--host` | `MCP_HOST`, else `127.0.0.1` | address to bind (HTTP) |
 | `--port` | `MCP_PORT`, else `8000` | port to bind (HTTP) |
 | `--path` | `/mcp` | path the endpoint answers on (HTTP) |
-| `--working-dir` | current directory | where relative paths start |
-| `--allowed-root` | home directory | an allowed root; repeatable |
+| `--working-dir` | current directory | where relative paths start and files are uploaded from |
+| `--allowed-root` | home directory | where screenshots may be written besides `/tmp`; repeatable |
 | `--state-dir` | `~/.mcp-playwright-tools` | where the grant is kept; empty for no grants |
 | `--mode` | `guarded` | `open`, `guarded` or `strict` |
-| `--exec` | off | let `run_javascript` run without a grant |
 | `--browser` | `chromium` | `chromium`, `firefox` or `webkit` |
 | `--channel` | none | an installed browser such as `chrome` |
 | `--headed` | off | show the browser window |

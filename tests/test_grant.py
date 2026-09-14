@@ -31,7 +31,8 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "grant.sh"
 FROM_CHECKOUT = GRANT_SCRIPT == SCRIPT
 INSTALLED = "the package is installed, not run from this checkout"
 HOME = Path("/home/someone")
-BASE = Boundary((HOME,), "guarded", execute=False)
+WORK = HOME / "Workspace"
+BASE = Boundary((HOME,), "guarded", (WORK,))
 
 
 def later(seconds: float = 3600) -> float:
@@ -54,30 +55,19 @@ def test_an_unusable_duration_is_refused(text: str) -> None:
 
 def test_a_grant_replaces_the_mode() -> None:
     assert Grant(later(), mode="open").applied(BASE) == Boundary(
-        (HOME,), "open", execute=False
+        (HOME,), "open", (WORK,)
     )
 
 
-def test_a_grant_adds_roots_once() -> None:
-    granted = Grant(later(), roots=(Path("/opt"), HOME))
+def test_a_grant_adds_its_roots_once_to_the_roots_and_the_upload_directories() -> None:
+    applied = Grant(later(), roots=(Path("/opt"), HOME)).applied(BASE)
 
-    assert granted.applied(BASE).roots == (HOME, Path("/opt"))
+    assert applied.roots == (HOME, Path("/opt"))
+    assert applied.uploads == (WORK, Path("/opt"), HOME)
 
 
 def test_a_grant_does_not_limit_what_had_no_limit() -> None:
     assert Grant(later(), roots=(Path("/opt"),)).applied(Boundary()) == Boundary()
-
-
-@pytest.mark.parametrize("execute", [True, False])
-def test_a_grant_switches_scripts(execute: bool) -> None:
-    on = Boundary((HOME,), execute=True)
-
-    assert Grant(later(), execute=execute).applied(BASE).execute is execute
-    assert Grant(later(), execute=execute).applied(on).execute is execute
-
-
-def test_a_grant_without_a_word_on_scripts_leaves_them() -> None:
-    assert Grant(later(), mode="open").applied(BASE).execute is False
 
 
 def test_without_a_state_directory_the_configured_boundary_holds() -> None:
@@ -89,9 +79,9 @@ def test_without_a_grant_file_the_configured_boundary_holds(tmp_path: Path) -> N
 
 
 def test_a_written_grant_is_in_force(tmp_path: Path) -> None:
-    write_grant(tmp_path, Grant(later(), mode="open", execute=True))
+    write_grant(tmp_path, Grant(later(), mode="open"))
 
-    assert boundary_in_force(BASE, tmp_path) == Boundary((HOME,), "open", True)
+    assert boundary_in_force(BASE, tmp_path) == Boundary((HOME,), "open", (WORK,))
 
 
 def test_a_lapsed_grant_leaves_the_configured_boundary(tmp_path: Path) -> None:
@@ -117,8 +107,6 @@ def test_a_rewritten_grant_is_read_again(tmp_path: Path) -> None:
         '{"mode": "open"}',
         '{"until": "soon"}',
         '{"until": 1e12, "mode": "loose"}',
-        '{"until": 1e12, "execute": "yes"}',
-        '{"until": 1e12, "execute": 1}',
         '{"until": 1e12, "roots": ["relative"]}',
         '{"until": 1e12, "roots": [7]}',
     ],
@@ -153,9 +141,9 @@ def test_a_failed_write_keeps_the_previous_grant(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not FROM_CHECKOUT, reason=INSTALLED)
 def test_the_hint_names_the_script_and_the_change(tmp_path: Path) -> None:
-    text = hint(tmp_path, "--exec")
+    text = hint(tmp_path, "--root /opt")
 
-    assert f"with: {SCRIPT} --state-dir {tmp_path} set --exec --for 1h" in text
+    assert f"with: {SCRIPT} --state-dir {tmp_path} set --root /opt --for 1h" in text
 
 
 @pytest.mark.skipif(not FROM_CHECKOUT, reason=INSTALLED)
@@ -169,14 +157,14 @@ def test_without_a_checkout_the_hint_names_the_module(
 ) -> None:
     monkeypatch.setattr(grant, "GRANT_SCRIPT", tmp_path / "missing" / "grant.sh")
 
-    text = hint(tmp_path, "--exec")
+    text = hint(tmp_path, "--root /opt")
 
-    expected = f"{sys.executable} -m {GRANT_MODULE} --state-dir {tmp_path} set --exec"
+    expected = f"{sys.executable} -m {GRANT_MODULE} --state-dir {tmp_path} set --root"
     assert expected in text
 
 
 def test_without_a_state_directory_the_hint_says_what_is_missing() -> None:
-    assert "--state-dir" in hint(None, "--exec")
+    assert "--state-dir" in hint(None, "--root /opt")
 
 
 def test_the_program_runs_as_a_module(tmp_path: Path) -> None:
@@ -196,7 +184,16 @@ def test_the_wrapper_script_runs_the_program_from_anywhere(tmp_path: Path) -> No
     link.symlink_to(SCRIPT)
 
     finished = subprocess.run(
-        [str(link), "--state-dir", str(tmp_path), "set", "--exec", "--for", "1h"],
+        [
+            str(link),
+            "--state-dir",
+            str(tmp_path),
+            "set",
+            "--mode",
+            "open",
+            "--for",
+            "1h",
+        ],
         capture_output=True,
         text=True,
         cwd=tmp_path,
@@ -206,7 +203,7 @@ def test_the_wrapper_script_runs_the_program_from_anywhere(tmp_path: Path) -> No
     written = read_grant(tmp_path)
     assert finished.returncode == 0, finished.stderr
     assert written is not None
-    assert written.execute is True
+    assert written.mode == "open"
 
 
 def test_the_wrapper_script_without_a_venv_says_how_to_make_one(tmp_path: Path) -> None:
@@ -229,22 +226,14 @@ def test_set_writes_a_grant_that_is_in_force(
     extra = tmp_path / "extra"
     argv = ["--state-dir", str(tmp_path), "set", "--mode", "open"]
 
-    code = tool.main([*argv, "--root", str(extra), "--exec", "--for", "2h"])
+    code = tool.main([*argv, "--root", str(extra), "--for", "2h"])
 
     written = read_grant(tmp_path)
     assert code == 0
     assert "mode open" in capsys.readouterr().out
     assert written is not None
-    assert (written.mode, written.roots, written.execute) == ("open", (extra,), True)
+    assert (written.mode, written.roots) == ("open", (extra,))
     assert 7100 < written.until - time.time() <= 7200
-
-
-def test_set_can_switch_scripts_off(tmp_path: Path) -> None:
-    tool.main(["--state-dir", str(tmp_path), "set", "--no-exec", "--for", "1h"])
-
-    written = read_grant(tmp_path)
-    assert written is not None
-    assert written.execute is False
 
 
 def test_set_without_a_change_is_refused(
@@ -253,13 +242,13 @@ def test_set_without_a_change_is_refused(
     code = tool.main(["--state-dir", str(tmp_path), "set", "--for", "1h"])
 
     assert code == tool.REFUSED
-    assert "has to change something" in capsys.readouterr().err
+    assert "give --mode or --root" in capsys.readouterr().err
     assert read_grant(tmp_path) is None
 
 
 def test_set_without_a_duration_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
-        tool.main(["--state-dir", str(tmp_path), "set", "--exec"])
+        tool.main(["--state-dir", str(tmp_path), "set", "--mode", "open"])
 
     assert read_grant(tmp_path) is None
 
@@ -267,7 +256,7 @@ def test_set_without_a_duration_is_refused(tmp_path: Path) -> None:
 def test_set_with_an_unusable_duration_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    argv = ["--state-dir", str(tmp_path), "set", "--exec", "--for", "forever"]
+    argv = ["--state-dir", str(tmp_path), "set", "--mode", "open", "--for", "forever"]
 
     assert tool.main(argv) == tool.REFUSED
     assert "not a duration" in capsys.readouterr().err
@@ -277,19 +266,22 @@ def test_set_with_an_unusable_duration_is_refused(
 def test_show_reports_the_grant_and_when_it_lapses(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    tool.main(["--state-dir", str(tmp_path), "set", "--exec", "--for", "2h"])
+    extra = tmp_path / "extra"
+    tool.main(
+        ["--state-dir", str(tmp_path), "set", "--root", str(extra), "--for", "2h"]
+    )
     capsys.readouterr()
 
     assert tool.main(["--state-dir", str(tmp_path), "show"]) == 0
     shown = capsys.readouterr().out
-    assert "scripts on" in shown
+    assert f"roots {extra}" in shown
     assert "lapses in 1h 59m" in shown
 
 
 def test_show_of_a_lapsed_grant_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    write_grant(tmp_path, Grant(time.time() - 1, execute=True))
+    write_grant(tmp_path, Grant(time.time() - 1, mode="open"))
 
     tool.main(["--state-dir", str(tmp_path), "show"])
 
@@ -315,7 +307,7 @@ def test_show_of_an_unusable_grant_file_is_refused(
 def test_reset_removes_the_grant(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    tool.main(["--state-dir", str(tmp_path), "set", "--exec", "--for", "1h"])
+    tool.main(["--state-dir", str(tmp_path), "set", "--mode", "open", "--for", "1h"])
 
     assert tool.main(["--state-dir", str(tmp_path), "reset"]) == 0
     assert "removed" in capsys.readouterr().out

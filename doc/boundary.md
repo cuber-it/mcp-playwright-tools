@@ -1,51 +1,37 @@
 # Boundary and grants
 
-The boundary decides how far the tools reach on the machine the browser runs
-on. It is checked for every path a tool resolves: files handed to a page,
-pages opened from disk and screenshots written to a file.
+Everything the tools do inside the browser needs no permission, `run_javascript`
+included. The boundary only decides how far the tools reach on the machine the
+browser runs on, and it is checked for every path a tool resolves.
 
-## Roots, mode and scripts
+## What is checked
 
-A boundary has three parts.
+| Access | Tools | `guarded` (default) | `strict` | `open` |
+|---|---|---|---|---|
+| reading | `open_url` with a `file:` address | anywhere | inside the roots | anywhere |
+| writing | `screenshot` with `save_to` | inside the roots | inside the roots | anywhere |
+| uploading | `attach_files` | from the upload directories | from the upload directories | anywhere |
 
-**Roots** are the directories the tools are confined to. Without roots there is
-no limit. The server uses the home directory unless `--allowed-root` names
-others.
+- **The roots** are the home directory unless `--allowed-root` names others.
+- **The upload directory** is the working directory. An upload hands a file to
+  a web page, which can send it anywhere, so the home directory with `~/.ssh`
+  and `~/.config` stays out of reach for it.
+- **`/tmp` is always within reach**, for every access and in every mode.
+- A `javascript:` address is refused by `open_url`; it runs a script, which is
+  what `run_javascript` is for.
 
-**The mode** decides what the roots confine:
-
-| Mode | Reading | Writing |
-|---|---|---|
-| `open` | anywhere | anywhere |
-| `guarded` (default) | anywhere | inside the roots |
-| `strict` | inside the roots | inside the roots |
-
-**Scripts** are a switch of their own. `run_javascript` runs code with the
-rights of the page, also in a session somebody is logged into, and no path
-check can confine that. The server starts with scripts off; `--exec` switches
-them on for good, a grant for a while.
-
-## What each tool needs
-
-| Access | Tools |
-|---|---|
-| reading | `attach_files`, `open_url` with a `file:` address |
-| writing | `screenshot` with `save_to` |
-| scripts | `run_javascript` |
-| none | every other tool |
-
-A `javascript:` address is refused by `open_url` in every mode; it runs a
-script, which is what `run_javascript` is for.
+Empty roots or empty upload directories mean no limit for what they confine.
+That is how the library runs when a `Workspace` is built without a boundary.
 
 ## Refusals
 
-A refused path raises `OutsideBoundaryError`, switched-off scripts
-`NotPermittedError`. Both messages end with the grant that would lift them:
+A refused path raises `OutsideBoundaryError`, and the message ends with the
+grant that would lift it:
 
 ```text
-running JavaScript is switched off; a person on the host can allow it with:
-/path/to/mcp-playwright-tools/scripts/grant.sh --state-dir
-/home/you/.mcp-playwright-tools set --exec --for 1h
+outside the directories uploads may come from: /home/you/.config/token.txt; a
+person on the host can allow it with: /path/to/mcp-playwright-tools/scripts/grant.sh
+--state-dir /home/you/.mcp-playwright-tools set --root /home/you/.config --for 1h
 ```
 
 The suggested root is the refused path if it is a directory, otherwise the
@@ -58,11 +44,9 @@ It takes effect at the next tool call and lapses on its own; the server does not
 restart.
 
 ```bash
-scripts/grant.sh set --exec --for 30m            # scripts run
-scripts/grant.sh set --root /opt/shots --for 2h  # writing reaches /opt/shots too
-scripts/grant.sh set --mode open --for 15m       # no confinement at all
-scripts/grant.sh set --mode strict --for 1d      # reading confined as well
-scripts/grant.sh set --no-exec --for 1d          # scripts off, even with --exec
+scripts/grant.sh set --root ~/Downloads --for 30m  # uploads and screenshots reach it
+scripts/grant.sh set --mode open --for 15m         # no limit at all
+scripts/grant.sh set --mode strict --for 1d        # reading confined as well
 scripts/grant.sh show
 scripts/grant.sh reset
 ```
@@ -70,9 +54,8 @@ scripts/grant.sh reset
 | Option | Effect |
 |---|---|
 | `--for` | required; a number with `s`, `m`, `h` or `d`, for instance `30m` |
-| `--root PATH` | adds a root; repeatable. Without configured roots there is no limit, and a grant adds none |
+| `--root PATH` | adds a root and an upload directory; repeatable |
 | `--mode` | replaces the configured mode |
-| `--exec`, `--no-exec` | switch scripts on or off |
 | `--state-dir` | state directory of the server, `~/.mcp-playwright-tools` unless given |
 
 A grant has to change something. A new grant replaces the previous one. Lasting
@@ -96,13 +79,12 @@ The grant is `grant.json` in the state directory, readable by its owner only:
 {
   "until": 1789000000.0,
   "mode": "open",
-  "roots": ["/opt/shots"],
-  "execute": true
+  "roots": ["/home/you/Downloads"]
 }
 ```
 
-`until` is a Unix time. `mode` and `execute` may be `null`, meaning unchanged.
-`roots` must be absolute.
+`until` is a Unix time. `mode` may be `null`, meaning unchanged. `roots` must
+be absolute.
 
 - The file is written to a temporary name and renamed, so the server sees the
   old grant or the new one, never half of either.

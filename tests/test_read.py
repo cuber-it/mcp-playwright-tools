@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from mcp_playwright_tools import (
     Workspace,
     read,
 )
+from mcp_playwright_tools.boundary import TMP
 from mcp_playwright_tools.grant import GRANT_FILE
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -227,6 +229,21 @@ def test_a_screenshot_outside_the_roots_is_refused_before_it_is_taken(
 
     assert not (tmp_path / "page.png").exists()
     assert "never-opened" not in fenced.pool.sessions()
+
+
+def test_a_screenshot_goes_to_tmp_without_a_grant(
+    fenced: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    show("<p>x</p>")
+    shot = TMP / f"mcp-playwright-tools-{uuid.uuid4().hex}.png"
+    try:
+        answer = run(read.screenshot(fenced.browsing(), save_to=str(shot)))
+        written = shot.read_bytes()
+    finally:
+        shot.unlink(missing_ok=True)
+
+    assert answer.startswith(f"wrote {shot}, ")
+    assert written.startswith(PNG_SIGNATURE)
 
 
 def test_a_screenshot_is_never_written_over_the_grant_file(
