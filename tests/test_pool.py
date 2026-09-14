@@ -75,6 +75,19 @@ def test_a_browser_that_went_away_is_started_again_with_fresh_contexts(
     assert run(navigate.tabs(lone.browsing("a"))) == "tabs [0], active 0"
 
 
+def test_the_contexts_of_a_browser_that_went_away_are_forgotten_not_closed(
+    lone: Workspace, run: Run
+) -> None:
+    lone.pool.settings = Settings(channel=CHANNEL, idle=60)
+    spot = run(lone.pool.spot("a"))
+    spot.session.touched -= 120
+    run(spot.context.browser.close())
+
+    assert run(lone.pool.sweep()) == []
+    assert run(lone.pool.close("a")) is False
+    assert run(lone.pool.close_all()) == 0
+
+
 def test_a_browser_that_cannot_start_is_reported_and_leaves_nothing_running(
     run: Run,
 ) -> None:

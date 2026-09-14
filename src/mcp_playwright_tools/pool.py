@@ -250,6 +250,7 @@ class BrowserPool:
             ToolError: It did not close cleanly. It is gone from the pool all
                 the same and ends with the browser.
         """
+        self._forget_lost_browser()
         session = self._sessions.pop(name, None)
         if session is None:
             return False
@@ -268,6 +269,7 @@ class BrowserPool:
         Returns:
             How many contexts were open.
         """
+        self._forget_lost_browser()
         names = list(self._sessions)
         for name in names:
             await self._shut(name, self._sessions.pop(name))
@@ -280,6 +282,7 @@ class BrowserPool:
         Returns:
             The names that were closed.
         """
+        self._forget_lost_browser()
         if self.settings.idle <= 0:
             return []
         stale = [
