@@ -1,0 +1,100 @@
+[build-system]
+# 77 is the first release that reads a license expression and license-files.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-playwright-tools"
+version = "8.0.0"
+description = "Browser tools for AI assistants, as a Python library and an MCP server"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ulrich Cuber", email = "sonstige@uc-it.de" }]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "playwright",
+    "browser",
+    "automation",
+    "tools",
+    "oauth",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = ["playwright>=1.61"]
+
+[project.optional-dependencies]
+server = ["mcp>=2,<3"]
+dev = ["pytest", "ruff", "pylint", "build", "twine", "mcp>=2,<3"]
+
+[project.scripts]
+mcp-playwright-tools = "mcp_playwright_tools.server.app:main"
+pw-browse = "mcp_playwright_tools.cli:main"
+
+[project.urls]
+Homepage = "https://www.uc-it.de"
+Repository = "https://github.com/cuber-it/mcp-playwright-tools"
+Documentation = "https://github.com/cuber-it/mcp-playwright-tools/tree/master/doc"
+Changelog = "https://github.com/cuber-it/mcp-playwright-tools/blob/master/CHANGES.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "D", "UP", "B", "C90", "TID"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.pep8-naming]
+# http.server dispatches to handler methods by the HTTP verb, in capitals.
+extend-ignore-names = ["do_POST", "do_GET"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"mcp".msg = "Only mcp_playwright_tools.server.app may import the SDK."
+
+[tool.ruff.lint.per-file-ignores]
+"src/mcp_playwright_tools/server/app.py" = ["TID251"]
+# These tests check the SDK binding the way an SDK client and caller meet it.
+"tests/test_server.py" = ["TID251"]
+"tests/test_server_client.py" = ["TID251"]
+# Test names carry the sentence; a docstring would only repeat them.
+"tests/*" = ["D103"]
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint.design]
+# A token check and the SDK's verifier each answer exactly one question.
+min-public-methods = 1
+
+[tool.pylint.basic]
+# http.server dispatches to handler methods by the HTTP verb, in capitals.
+good-names-rgxs = ["^do_[A-Z]+$"]
+# Test names carry the sentence; a docstring would only repeat them.
+no-docstring-rgx = "^test_"
+
+[tool.pylint."messages control"]
+# A pytest fixture is used under its own name by design.
+disable = ["redefined-outer-name"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
