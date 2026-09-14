@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from mcp_playwright_tools import act, examine, keep, navigate
+from mcp_playwright_tools import act, examine, keep, navigate, watch
 from mcp_playwright_tools import read as reading
 from mcp_playwright_tools.pool import DEFAULT_CONTEXT
 from mcp_playwright_tools.read import Picture
@@ -36,6 +36,7 @@ def catalogue(space: Workspace) -> Catalogue:
         *_doing(space),
         *_reading(space),
         *_keeping(space),
+        *_watching(space),
     ]
     return {tool.__name__: tool for tool in tools}
 
@@ -76,15 +77,21 @@ def _going(space: Workspace) -> list[Tool]:
         """
         return await navigate.go(space.browsing(context), direction)
 
-    async def where_am_i(context: str = DEFAULT_CONTEXT) -> dict[str, str]:
-        """Report the address and the title of the page that is open.
+    async def where_am_i(context: str = DEFAULT_CONTEXT) -> dict[str, Any]:
+        """Report where the tools act: page, tab, frame, frames and viewport.
 
-        Cheap; use it to check where the browser stands before doing more.
+        Gives url and title of the page, tab (the active tab's number), frame
+        (the selector given to use_frame, empty in the page itself), frames
+        (every frame in the page with its name and address) and viewport
+        (width x height in pixels). Cheap; use it to check where the browser
+        stands before doing more.
 
-        Nennt Adresse und Titel der offenen Seite. Günstig, um vor dem nächsten
-        Schritt nachzusehen, wo der Browser steht.
+        Nennt Adresse und Titel der offenen Seite, den aktiven Tab, den Frame,
+        in dem gearbeitet wird, alle Frames der Seite und die Größe des
+        Anzeigebereichs. Günstig, um vor dem nächsten Schritt nachzusehen.
 
-        Stichworte: aktuelle Seite, welche URL, Adresse, Titel, wo bin ich.
+        Stichworte: aktuelle Seite, welche URL, Adresse, Titel, wo bin ich,
+        Frames auflisten, Fenstergröße.
         """
         return await navigate.where_am_i(space.browsing(context))
 
@@ -93,14 +100,20 @@ def _going(space: Workspace) -> list[Tool]:
     ) -> str:
         """Work with tabs: list, open, switch or close.
 
-        action is list, open, switch or close. switch and close need the tab's
-        number in tab, which list reports. The tools act on the active tab.
+        action is list, open, switch or close. list gives each tab's number,
+        title and address and marks the active one; switch and close need the
+        number in tab. The tools act on the active tab, in the page itself
+        after a switch. A tab the page opens, by a link with target _blank or
+        by window.open, is listed and becomes the active one, as a tab opened
+        here does; a tab that closes itself is dropped.
 
-        Arbeitet mit Tabs: auflisten, öffnen, wechseln, schließen. switch und
-        close brauchen die Nummer des Tabs, die list nennt. Die Werkzeuge
-        wirken auf den aktiven Tab.
+        Arbeitet mit Tabs: auflisten, öffnen, wechseln, schließen. list nennt
+        Nummer, Titel und Adresse jedes Tabs. Tabs, die die Seite selbst
+        öffnet (target=_blank, window.open), erscheinen ebenfalls und werden
+        zum aktiven Tab.
 
-        Stichworte: Tab öffnen, wechseln, schließen, Reiter, Registerkarte.
+        Stichworte: Tab öffnen, wechseln, schließen, Reiter, Registerkarte,
+        neues Fenster, Popup-Fenster.
         """
         return await navigate.tabs(space.browsing(context), action, tab)
 
@@ -108,17 +121,38 @@ def _going(space: Workspace) -> list[Tool]:
         """Work inside a frame, or go back to the page itself.
 
         Pass the frame's CSS selector to act inside it from now on; pass
-        nothing to leave it.
+        nothing to leave it. A frame inside a frame is reached step by step,
+        joined with >>, for instance #outer >> #inner. where_am_i lists the
+        frames of the page; iframe[name="x"] picks one by its name.
 
         Arbeitet in einem Frame oder wieder in der Seite selbst. Mit dem
         CSS-Selektor des Frames wirken die folgenden Aufrufe darin, ohne
-        Selektor wieder in der Seite.
+        Selektor wieder in der Seite. Verschachtelte Frames: #aussen >> #innen.
 
-        Stichworte: Frame wechseln, iframe, Rahmen, zurück zur Hauptseite.
+        Stichworte: Frame wechseln, iframe, Rahmen, verschachtelt, zurück zur
+        Hauptseite.
         """
         return await navigate.use_frame(space.browsing(context), selector)
 
-    return [open_url, go, where_am_i, tabs, use_frame]
+    async def viewport(
+        width: int = 0, height: int = 0, context: str = DEFAULT_CONTEXT
+    ) -> str:
+        """Report the size of the page area, or set it in pixels.
+
+        Without width and height it only reports. Setting both shows the page
+        as it looks on a smaller or larger screen. For a phone with its user
+        agent and touch, open a context as a device with contexts.
+
+        Nennt die Größe des Anzeigebereichs oder setzt sie auf width mal height
+        Pixel. Für ein Mobilgerät mit User-Agent und Touch einen Kontext mit
+        contexts und device öffnen.
+
+        Stichworte: Fenstergröße, Bildschirmgröße, Auflösung, responsive,
+        mobile Ansicht.
+        """
+        return await navigate.viewport(space.browsing(context), width, height)
+
+    return [open_url, go, where_am_i, tabs, use_frame, viewport]
 
 
 def _finding(space: Workspace) -> list[Tool]:
@@ -394,14 +428,16 @@ def _reading(space: Workspace) -> list[Tool]:
 
         Without target the visible part of the page is taken, with full=true
         the whole page; name an element to take only that. With save_to the
-        picture is written to that file instead and the path comes back; files
-        go to /tmp or the allowed roots, the home directory by default.
+        picture is written to that file instead and the path comes back; a
+        file ending in .pdf gets the whole page printed as a PDF. Files go to
+        /tmp or the allowed roots, the home directory by default.
 
         Macht ein Bildschirmfoto und zeigt es als Bild: den sichtbaren Teil,
         mit full=true die ganze Seite oder nur ein Element. Mit save_to wird es
-        stattdessen in diese Datei geschrieben.
+        stattdessen in diese Datei geschrieben, bei .pdf als PDF der Seite.
 
-        Stichworte: Bildschirmfoto, Screenshot, Seite fotografieren, Bild.
+        Stichworte: Bildschirmfoto, Screenshot, Seite fotografieren, Bild, PDF,
+        drucken.
         """
         return await reading.screenshot(
             space.browsing(context), target, by, full, save_to
@@ -482,20 +518,98 @@ def _keeping(space: Workspace) -> list[Tool]:
             space.browsing(context), action, pattern, body, status
         )
 
-    async def contexts(action: str = "list", name: str = "") -> str:
-        """List the open browser contexts, or close one or all of them.
+    async def contexts(
+        action: str = "list", name: str = "", device: str = "", state: str = ""
+    ) -> str:
+        """List, open, save or close browser contexts.
 
-        action is list or close. list names each context with its tabs and how
-        long nobody has used it. close with name closes that context, without
-        name every context and the browser; do that when finished, it frees
-        memory.
+        action is list, open, save or close. list names the browser with its
+        version, then each context with its tabs and how long nobody has used
+        it. open starts the context name, passing for device (such as iPhone
+        13 or Pixel 7) and holding the cookies and storage of the file state
+        when they are given. save writes the cookies and storage of the
+        context name to the file state, readable by its owner only, so a login
+        can be used again. close with name closes that context, without name
+        every context and the browser; do that when finished, it frees memory.
 
-        Listet die offenen Browser-Kontexte oder schließt einen oder alle.
-        Ohne name schließt close alle und beendet den Browser; das gibt
-        Speicher frei.
+        Listet, öffnet, speichert oder schließt Browser-Kontexte. list nennt
+        zuerst Browser und Version. open startet einen Kontext, mit device als
+        Gerät, mit state aus einer gespeicherten Datei. save schreibt Cookies
+        und Speicher in die Datei state, etwa um eine Anmeldung zu behalten.
+        close ohne name schließt alle und beendet den Browser.
 
-        Stichworte: Browser-Kontexte, Sitzungen, Browser schließen, aufräumen.
+        Stichworte: Browser-Kontexte, Sitzungen, Browserinfo, Browser-Version,
+        Handy emulieren, Mobilgerät, Anmeldung speichern, Browser schließen.
         """
-        return await keep.contexts(space, action, name)
+        return await keep.contexts(space, action, name, device, state)
 
     return [storage, intercept, contexts]
+
+
+def _watching(space: Workspace) -> list[Tool]:
+    """Return the tools for what happened in a context: logs, dialogs, downloads."""
+
+    async def logs(
+        kind: str = "console",
+        action: str = "read",
+        contains: str = "",
+        context: str = DEFAULT_CONTEXT,
+    ) -> str:
+        """Read or clear what a context recorded since it opened.
+
+        kind is console (messages and uncaught errors of its pages, with their
+        tab), network (responses with status, failed requests) or dialogs
+        (alerts, confirms and prompts and how they were answered). action is
+        read or clear. read gives the latest entries, oldest first, and with
+        contains only those containing it.
+
+        Liest oder leert, was ein Kontext aufgezeichnet hat: kind=console für
+        Konsolenmeldungen und JavaScript-Fehler, network für Antworten und
+        fehlgeschlagene Anfragen, dialogs für Dialoge. contains filtert.
+
+        Stichworte: Konsole, console.log, JavaScript-Fehler, Netzwerk,
+        Anfragen, HTTP-Status, Protokoll, Log.
+        """
+        return await watch.logs(space.browsing(context), kind, action, contains)
+
+    async def dialogs(
+        answer: str = "accept", text: str = "", context: str = DEFAULT_CONTEXT
+    ) -> str:
+        """Set how alerts, confirms and prompts are answered from now on.
+
+        answer is accept or dismiss; dialogs are accepted unless set
+        otherwise. text is what prompts are answered with, their own default
+        when empty. Every dialog is answered at once and shows up in logs with
+        kind dialogs.
+
+        Legt fest, wie Dialoge (alert, confirm, prompt) beantwortet werden:
+        answer=accept oder dismiss, text ist die Antwort auf prompt.
+        Voreinstellung ist accept; jeder Dialog steht danach in logs.
+
+        Stichworte: Dialog, Meldungsfenster, alert, confirm, prompt,
+        bestätigen, abbrechen.
+        """
+        return await watch.dialogs(space.browsing(context), answer, text)
+
+    async def downloads(
+        action: str = "list",
+        number: int = -1,
+        save_to: str = "",
+        context: str = DEFAULT_CONTEXT,
+    ) -> str:
+        """List what the pages of a context downloaded, or save one download.
+
+        action is list or save. list gives each download's number, file name
+        and address. save takes the number and save_to, a file or a directory
+        the download keeps its name in; files go to /tmp or the allowed roots.
+        Downloads are kept until the context closes.
+
+        Listet die Downloads eines Kontexts oder speichert einen: save braucht
+        number und save_to, eine Datei oder ein Verzeichnis. Downloads bleiben,
+        bis der Kontext geschlossen wird.
+
+        Stichworte: Download, herunterladen, heruntergeladene Datei speichern.
+        """
+        return await watch.downloads(space.browsing(context), action, number, save_to)
+
+    return [logs, dialogs, downloads]

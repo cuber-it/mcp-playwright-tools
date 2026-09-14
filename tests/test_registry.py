@@ -62,7 +62,9 @@ def test_a_tool_reaches_the_browser_of_the_workspace(
 ) -> None:
     address = show("<title>Bound</title>")
 
-    assert run(catalogue(space)["where_am_i"]()) == {"url": address, "title": "Bound"}
+    found = run(catalogue(space)["where_am_i"]())
+
+    assert (found["url"], found["title"]) == (address, "Bound")
 
 
 def test_a_screenshot_is_handed_back_as_a_picture(

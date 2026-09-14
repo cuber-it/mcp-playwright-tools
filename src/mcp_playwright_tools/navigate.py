@@ -1,9 +1,12 @@
-"""Where the browser is: opening pages, the history, tabs and frames."""
+"""Where the browser is: opening pages, the history, tabs, frames and the viewport."""
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
+
+from playwright.async_api import Page
 
 from mcp_playwright_tools.errors import ToolError, attempt, unknown
 from mcp_playwright_tools.workspace import Browsing, Workspace
@@ -52,10 +55,26 @@ async def go(browsing: Browsing, direction: str = "back") -> str:
     return f"at {page.url}"
 
 
-async def where_am_i(browsing: Browsing) -> dict[str, str]:
-    """Return the address and the title of the page that is open."""
-    page = (await browsing.spot()).page
-    return {"url": page.url, "title": await page.title()}
+async def where_am_i(browsing: Browsing) -> dict[str, Any]:
+    """Return address, title, tab, frame acted in, the page's frames and viewport.
+
+    Raises:
+        ToolError: The title could not be read.
+    """
+    spot = await browsing.spot()
+    page = spot.page
+    return {
+        "url": page.url,
+        "title": await attempt(page.title(), "read the title"),
+        "tab": spot.session.active,
+        "frame": spot.session.frame or "",
+        "frames": [
+            f"{frame.name or '(no name)'} - {frame.url}"
+            for frame in page.frames
+            if frame.parent_frame is not None
+        ],
+        "viewport": _size(page),
+    }
 
 
 async def tabs(browsing: Browsing, action: str = "list", tab: int = -1) -> str:
@@ -69,7 +88,12 @@ async def tabs(browsing: Browsing, action: str = "list", tab: int = -1) -> str:
         session = await browsing.session()
         if not session.pages:
             return "no tab open"
-        return f"tabs {sorted(session.pages)}, active {session.active}"
+        return "\n".join(
+            [
+                await _described(number, page, number == session.active)
+                for number, page in sorted(session.pages.items())
+            ]
+        )
     if action == "open":
         return f"opened tab {await pool.open_tab(browsing.context)}"
     if action == "switch":
@@ -82,10 +106,46 @@ async def tabs(browsing: Browsing, action: str = "list", tab: int = -1) -> str:
 
 
 async def use_frame(browsing: Browsing, selector: str = "") -> str:
-    """Act inside the frame a selector names from now on, or in the page again."""
+    """Act inside the frame a selector names from now on, or in the page again.
+
+    Steps into a frame inside a frame are joined with ``>>``.
+    """
     session = await browsing.session()
     session.frame = selector or None
     return f"acting inside {selector!r}" if selector else "acting in the page itself"
+
+
+async def viewport(browsing: Browsing, width: int = 0, height: int = 0) -> str:
+    """Report the viewport of the active tab, or set it in pixels.
+
+    Raises:
+        ToolError: Only one side is given, a side is not positive, or the
+            viewport could not be set.
+    """
+    if (width, height) != (0, 0) and (width <= 0 or height <= 0):
+        raise ToolError(f"width and height have to be positive, not {width}x{height}")
+    page = (await browsing.spot()).page
+    if width:
+        size = {"width": width, "height": height}
+        await attempt(page.set_viewport_size(size), "set the viewport")
+    return f"viewport {_size(page)}"
+
+
+async def _described(number: int, page: Page, active: bool) -> str:
+    """Return one line of the tab listing.
+
+    Raises:
+        ToolError: The title of the tab could not be read.
+    """
+    title = await attempt(page.title(), f"read the title of tab {number}")
+    marker = " (active)" if active else ""
+    return f"{number}{marker}: {title or '(no title)'} - {page.url}"
+
+
+def _size(page: Page) -> str:
+    """Return the viewport of a tab as width x height."""
+    size = page.viewport_size
+    return f"{size['width']}x{size['height']}" if size else "none"
 
 
 def _address(space: Workspace, url: str) -> str:

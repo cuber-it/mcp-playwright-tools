@@ -238,6 +238,29 @@ def test_a_screenshot_is_written_where_it_was_asked_for(
     assert stored.read_bytes().startswith(PNG_SIGNATURE)
 
 
+def test_a_file_ending_in_pdf_gets_the_whole_page_as_a_pdf(
+    space: Workspace, show: Callable[[str], str], run: Run, tmp_path: Path
+) -> None:
+    show("<p>printed</p>")
+
+    answer = run(read.screenshot(space.browsing(), save_to="page.PDF"))
+
+    stored = tmp_path / "page.PDF"
+    assert answer == f"wrote {stored}, {stored.stat().st_size} bytes"
+    assert stored.read_bytes().startswith(b"%PDF")
+
+
+def test_a_pdf_of_one_element_is_refused(
+    space: Workspace, show: Callable[[str], str], run: Run, tmp_path: Path
+) -> None:
+    show("<p id='a'>x</p>")
+
+    with pytest.raises(ToolError, match="a PDF is always of the whole page"):
+        run(read.screenshot(space.browsing(), "#a", save_to="page.pdf"))
+
+    assert not (tmp_path / "page.pdf").exists()
+
+
 def test_a_screenshot_outside_the_roots_is_refused_before_it_is_taken(
     fenced: Workspace, run: Run, tmp_path: Path
 ) -> None:

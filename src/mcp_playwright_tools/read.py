@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
-from pathlib import Path
 
 from mcp_playwright_tools.boundary import Access
 from mcp_playwright_tools.errors import ToolError, attempt, unknown
 from mcp_playwright_tools.locate import document, existing, locate
-from mcp_playwright_tools.output import cut, listed
+from mcp_playwright_tools.output import cut, listed, stored
 from mcp_playwright_tools.pool import Spot
 from mcp_playwright_tools.workspace import Browsing
 
@@ -78,11 +76,11 @@ async def screenshot(
     full: bool = False,
     save_to: str = "",
 ) -> Picture | str:
-    """Photograph the visible page, the whole page or one element.
+    """Photograph the visible page, the whole page or one element, or print a PDF.
 
-    With ``save_to`` the PNG is written to that file instead of handed back;
-    writing has to be allowed there, which is checked before the picture is
-    taken.
+    With ``save_to`` the PNG is written to that file instead of handed back; a
+    file ending in ``.pdf`` gets the whole page as a PDF. Writing has to be
+    allowed there, which is checked before anything is taken.
 
     Returns:
         The picture, or a line naming the file written.
@@ -90,11 +88,16 @@ async def screenshot(
     Raises:
         OutsideBoundaryError: Writing may not reach ``save_to``.
         NotPermittedError: ``save_to`` would reach the grant file.
-        ToolError: Nothing matches, the picture could not be taken, or the
-            file could not be written.
+        ToolError: Nothing matches, a PDF of one element was asked for, the
+            picture or the PDF could not be made, or the file could not be
+            written.
     """
-    space = browsing.space
-    destination = space.resolve(save_to, Access.WRITE) if save_to else None
+    destination = browsing.space.resolve(save_to, Access.WRITE) if save_to else None
+    if destination is not None and destination.suffix.lower() == ".pdf":
+        if target:
+            raise ToolError("a PDF is always of the whole page; leave target empty")
+        page = (await browsing.spot()).page
+        return stored(destination, await attempt(page.pdf(), "print the page"))
     spot = await browsing.spot()
     if target:
         element = await existing(spot, target, by)
@@ -104,7 +107,7 @@ async def screenshot(
     data = await attempt(pending, "take the screenshot")
     if destination is None:
         return Picture(data, "PNG")
-    return _stored(destination, data)
+    return stored(destination, data)
 
 
 async def wait_until(
@@ -190,21 +193,3 @@ async def _links(spot: Spot) -> str:
             for item in found
         ]
     )
-
-
-def _stored(path: Path, data: bytes) -> str:
-    """Write picture data to a file, so that a failed write leaves nothing behind.
-
-    Raises:
-        ToolError: The file could not be written.
-    """
-    partial = path.with_name(f".{path.name}.partial")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        partial.write_bytes(data)
-        partial.replace(path)
-    except OSError as err:
-        with contextlib.suppress(OSError):
-            partial.unlink(missing_ok=True)
-        raise ToolError(f"could not write {path}: {err}") from err
-    return f"wrote {path}, {len(data)} bytes"

@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
 from conftest import Run
-from mcp_playwright_tools import ToolError, Workspace, act, keep, navigate, read
+from mcp_playwright_tools import (
+    Boundary,
+    OutsideBoundaryError,
+    ToolError,
+    Workspace,
+    act,
+    keep,
+    navigate,
+    read,
+)
 
+A_PAGE = "data:text/html,<p>x</p>"
 COOKIE = {"name": "who", "value": "ada", "url": "http://127.0.0.1"}
 FETCHER = (
     "<p id='log'></p><button id='load' onclick=\"fetch('/api/thing')"
@@ -215,14 +227,105 @@ def test_interfering_in_a_way_that_does_not_exist_is_refused(
         run(keep.intercept(space.browsing(), action, pattern))
 
 
-def test_the_open_contexts_are_listed_with_their_tabs(
+def test_the_open_contexts_are_listed_after_the_browser(
     space: Workspace, show: Callable[[str], str], run: Run
 ) -> None:
     show("<p>x</p>")
 
     listing = run(keep.contexts(space)).splitlines()
 
+    assert re.fullmatch(r"browser \w+ [\d.]+, headless", listing[0])
     assert "default: 1 tab(s), active 0, idle 0s" in listing
+
+
+def test_a_context_opened_as_a_device_has_its_screen_and_its_agent(
+    space: Workspace, run: Run
+) -> None:
+    phone = space.browsing("phone")
+
+    assert run(keep.contexts(space, "open", "phone", "iPhone 13")) == (
+        "opened context 'phone' as iPhone 13"
+    )
+    run(navigate.open_url(phone, A_PAGE))
+    assert run(navigate.where_am_i(phone))["viewport"] == "390x664"
+    assert "iPhone" in run(run(phone.spot()).page.evaluate("navigator.userAgent"))
+
+
+def test_a_saved_context_opens_again_with_its_cookies(
+    space: Workspace, run: Run, tmp_path: Path
+) -> None:
+    saved = tmp_path / "login" / "state.json"
+    run(keep.storage(space.browsing(), "cookies", "set", value=json.dumps(COOKIE)))
+
+    assert run(keep.contexts(space, "save", "default", state="login/state.json")) == (
+        f"saved context 'default' to {saved}"
+    )
+    assert saved.stat().st_mode & 0o777 == 0o600
+    assert run(keep.contexts(space, "open", "again", state=str(saved))) == (
+        f"opened context 'again' with the state from {saved}"
+    )
+    found = json.loads(run(keep.storage(space.browsing("again"))))
+    assert [(item["name"], item["value"]) for item in found] == [("who", "ada")]
+
+
+@pytest.mark.parametrize(
+    ("opening", "message"),
+    [
+        ({"name": ""}, "opening a context needs a name"),
+        ({"device": "Nokia 3310"}, "no such device: Nokia 3310; known are "),
+        ({"state": "missing.json"}, "could not read the state file"),
+        ({"state": "broken.json"}, "could not read the state file"),
+        ({"state": "wrong.json"}, "could not open context 'new'"),
+    ],
+)
+def test_a_context_that_cannot_be_opened_is_refused_and_not_listed(
+    space: Workspace, run: Run, tmp_path: Path, opening: dict[str, str], message: str
+) -> None:
+    (tmp_path / "broken.json").write_text("not json", encoding="utf-8")
+    (tmp_path / "wrong.json").write_text('{"cookies": 1}', encoding="utf-8")
+
+    with pytest.raises(ToolError, match=message):
+        run(keep.contexts(space, "open", **{"name": "new", **opening}))
+
+    assert "new" not in space.pool.sessions()
+
+
+def test_a_context_that_is_open_is_not_opened_again(space: Workspace, run: Run) -> None:
+    run(keep.contexts(space, "open", "twice"))
+
+    with pytest.raises(ToolError, match="context 'twice' is already open"):
+        run(keep.contexts(space, "open", "twice"))
+
+
+@pytest.mark.parametrize(
+    ("name", "state", "message"),
+    [
+        ("", "state.json", "saving a context needs its name and a state file"),
+        ("default", "", "saving a context needs its name and a state file"),
+        ("ghost", "state.json", "no context 'ghost'"),
+    ],
+)
+def test_a_context_that_cannot_be_saved_is_refused(
+    space: Workspace, run: Run, name: str, state: str, message: str
+) -> None:
+    with pytest.raises(ToolError, match=message):
+        run(keep.contexts(space, "save", name, state=state))
+
+    assert not (space.working_dir / "state.json").exists()
+
+
+def test_a_state_file_goes_where_writing_may_reach_and_comes_from_where_reading_may(
+    fenced: Workspace, run: Run, tmp_path: Path
+) -> None:
+    outside = tmp_path / "state.json"
+    outside.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    run(navigate.tabs(fenced.browsing(), "open"))
+
+    with pytest.raises(OutsideBoundaryError, match="allowed roots for write"):
+        run(keep.contexts(fenced, "save", "default", state=str(outside)))
+    fenced.boundary = Boundary(fenced.boundary.roots, "strict")
+    with pytest.raises(OutsideBoundaryError, match="allowed roots for read"):
+        run(keep.contexts(fenced, "open", "again", state=str(outside)))
 
 
 def test_closing_one_context_leaves_the_others(space: Workspace, run: Run) -> None:
@@ -254,5 +357,5 @@ def test_closing_everything_reports_the_count_and_stops_the_browser(
 def test_an_unknown_thing_to_do_with_contexts_names_the_known_ones(
     space: Workspace, run: Run
 ) -> None:
-    with pytest.raises(ToolError, match="known are list, close"):
+    with pytest.raises(ToolError, match="known are list, open, save, close"):
         run(keep.contexts(space, "rename"))

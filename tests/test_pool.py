@@ -72,7 +72,9 @@ def test_a_browser_that_went_away_is_started_again_with_fresh_contexts(
     run(spot.context.browser.close())
 
     assert run(navigate.open_url(lone.browsing("a"), A_PAGE)).startswith("at data:")
-    assert run(navigate.tabs(lone.browsing("a"))) == "tabs [0], active 0"
+    assert (
+        run(navigate.tabs(lone.browsing("a"))) == f"0 (active): (no title) - {A_PAGE}"
+    )
 
 
 def test_the_contexts_of_a_browser_that_went_away_are_forgotten_not_closed(

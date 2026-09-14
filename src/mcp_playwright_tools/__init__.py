@@ -2,7 +2,8 @@
 
 The tools are plain async functions in :mod:`~mcp_playwright_tools.navigate`,
 :mod:`~mcp_playwright_tools.examine`, :mod:`~mcp_playwright_tools.act`,
-:mod:`~mcp_playwright_tools.read` and :mod:`~mcp_playwright_tools.keep`. Every
+:mod:`~mcp_playwright_tools.read`, :mod:`~mcp_playwright_tools.keep` and
+:mod:`~mcp_playwright_tools.watch`. Every
 one that works on a page takes a :class:`Browsing` as its first argument: a
 named browser context of the :class:`Workspace` it works against.
 
@@ -25,7 +26,7 @@ functions; the library itself never imports it.
 
 from importlib.metadata import PackageNotFoundError, version
 
-from mcp_playwright_tools import act, examine, keep, navigate, read
+from mcp_playwright_tools import act, examine, keep, navigate, read, watch
 from mcp_playwright_tools.boundary import Boundary
 from mcp_playwright_tools.errors import (
     GrantError,
@@ -60,5 +61,6 @@ __all__ = [
     "keep",
     "navigate",
     "read",
+    "watch",
     "workspace_from",
 ]

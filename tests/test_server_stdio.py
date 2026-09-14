@@ -15,6 +15,8 @@ import json
 import subprocess
 import sys
 
+from conftest import EXPECTED
+
 REVISION = "2026-07-28"
 ENVELOPE = {
     "io.modelcontextprotocol/protocolVersion": REVISION,
@@ -58,7 +60,7 @@ def test_the_started_process_answers_on_its_pipes() -> None:
     answer = ask("tools/list")
 
     assert "error" not in answer
-    assert len(answer["result"]["tools"]) == 24
+    assert {tool["name"] for tool in answer["result"]["tools"]} == EXPECTED
 
 
 def test_the_envelope_is_what_the_server_expects() -> None:

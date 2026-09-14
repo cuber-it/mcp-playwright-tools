@@ -7,16 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from conftest import Run
+from conftest import Run, awaiting
 from loopback import Site
 from mcp_playwright_tools import (
     Boundary,
     OutsideBoundaryError,
     ToolError,
     Workspace,
+    act,
     navigate,
     read,
 )
+
+OPENER = "<button id='open' onclick=\"window.open('{address}')\">open</button>"
 
 
 def test_opening_a_page_reports_where_it_ended_up(
@@ -114,29 +117,66 @@ def test_a_direction_that_does_not_exist_names_the_ones_that_do(
         run(navigate.go(space.browsing(), "sideways"))
 
 
-def test_where_am_i_reports_the_address_and_the_title(
-    space: Workspace, show: Callable[[str], str], run: Run
+def test_where_am_i_reports_page_tab_frames_and_viewport(
+    space: Workspace, show: Callable[[str], str], site: Site, run: Run
 ) -> None:
-    address = show("<title>Hello</title><p>x</p>")
+    side = site.page("<p>side</p>")
+    address = show(f"<title>Hello</title><iframe name='side' src='{side}'></iframe>")
+    run(read.wait_until(space.browsing(), "load"))
 
     assert run(navigate.where_am_i(space.browsing())) == {
         "url": address,
         "title": "Hello",
+        "tab": 0,
+        "frame": "",
+        "frames": [f"side - {side}"],
+        "viewport": "1280x720",
     }
 
 
 def test_tabs_are_opened_listed_switched_and_closed(
     space: Workspace, show: Callable[[str], str], run: Run
 ) -> None:
-    first = show("<p>first</p>")
+    first = show("<title>First</title>")
 
     assert run(navigate.tabs(space.browsing(), "open")) == "opened tab 1"
-    assert run(navigate.tabs(space.browsing())) == "tabs [0, 1], active 1"
-    assert run(navigate.where_am_i(space.browsing()))["url"] == "about:blank"
+    assert run(navigate.tabs(space.browsing())).splitlines() == [
+        f"0: First - {first}",
+        "1 (active): (no title) - about:blank",
+    ]
     assert run(navigate.tabs(space.browsing(), "switch", 0)) == "active tab is now 0"
     assert run(navigate.where_am_i(space.browsing()))["url"] == first
     assert run(navigate.tabs(space.browsing(), "close", 1)) == "closed tab 1"
-    assert run(navigate.tabs(space.browsing())) == "tabs [0], active 0"
+    assert run(navigate.tabs(space.browsing())) == f"0 (active): First - {first}"
+
+
+def test_a_tab_the_page_opens_is_listed_and_becomes_the_active_one(
+    space: Workspace, show: Callable[[str], str], site: Site, run: Run
+) -> None:
+    popup = site.page("<title>Popup</title><p id='where'>popup</p>")
+    first = show(f"<a id='go' href='{popup}' target='_blank'>go</a>")
+    context = run(space.browsing().session()).context
+
+    opened = run(awaiting(context, "page", act.click(space.browsing(), "#go")))
+    run(opened.wait_for_load_state())
+
+    assert run(navigate.tabs(space.browsing())).splitlines() == [
+        f"0: (no title) - {first}",
+        f"1 (active): Popup - {popup}",
+    ]
+    assert run(read.read(space.browsing(), "#where")) == "popup"
+
+
+def test_a_tab_that_closes_itself_is_dropped_and_the_work_goes_back(
+    space: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    first = show(OPENER.format(address="about:blank"))
+    context = run(space.browsing().session()).context
+    opened = run(awaiting(context, "page", act.click(space.browsing(), "#open")))
+
+    run(awaiting(opened, "close", opened.evaluate("setTimeout(() => window.close())")))
+
+    assert run(navigate.tabs(space.browsing())) == f"0 (active): (no title) - {first}"
 
 
 def test_closing_the_active_tab_hands_the_work_to_one_still_open(
@@ -199,3 +239,48 @@ def test_a_frame_is_where_the_next_calls_look_until_it_is_left(
     assert run(read.read(space.browsing(), "#where")) == "frame"
     assert run(navigate.use_frame(space.browsing())) == "acting in the page itself"
     assert run(read.read(space.browsing(), "#where")) == "page"
+
+
+def test_a_frame_inside_a_frame_is_reached_step_by_step(
+    space: Workspace, show: Callable[[str], str], site: Site, run: Run
+) -> None:
+    deep = site.page("<p id='where'>deep</p>")
+    middle = site.page(
+        f"<p id='where'>middle</p><iframe id='deep' src='{deep}'></iframe>"
+    )
+    show(f"<iframe id='middle' src='{middle}'></iframe>")
+
+    run(navigate.use_frame(space.browsing(), "#middle >> #deep"))
+    run(read.wait_until(space.browsing(), "visible", "#where"))
+
+    assert run(read.read(space.browsing(), "#where")) == "deep"
+
+
+def test_another_tab_is_acted_in_as_a_page_not_in_the_frame(
+    space: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    show("<iframe id='inner' srcdoc='<p>x</p>'></iframe>")
+    run(navigate.use_frame(space.browsing(), "#inner"))
+
+    run(navigate.tabs(space.browsing(), "open"))
+
+    assert run(navigate.where_am_i(space.browsing()))["frame"] == ""
+
+
+def test_the_viewport_is_reported_and_changed(
+    space: Workspace, show: Callable[[str], str], run: Run
+) -> None:
+    show("<p>x</p>")
+
+    assert run(navigate.viewport(space.browsing())) == "viewport 1280x720"
+    assert run(navigate.viewport(space.browsing(), 390, 844)) == "viewport 390x844"
+    page = run(space.browsing().spot()).page
+    assert run(page.evaluate("[innerWidth, innerHeight]")) == [390, 844]
+
+
+@pytest.mark.parametrize(("width", "height"), [(390, 0), (0, 844), (-1, 844)])
+def test_a_viewport_without_two_positive_sides_is_refused(
+    space: Workspace, run: Run, width: int, height: int
+) -> None:
+    with pytest.raises(ToolError, match="width and height have to be positive"):
+        run(navigate.viewport(space.browsing(), width, height))

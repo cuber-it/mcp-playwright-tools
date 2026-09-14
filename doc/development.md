@@ -67,13 +67,15 @@ src/mcp_playwright_tools/
   grant.py           reading and writing grants
   workspace.py       the shared state; every path check happens here
   pool.py            the browser, named contexts, tabs, the idle sweep
+  record.py          what a context records: console, network, dialogs, downloads
   locate.py          the ways of pointing at an element
-  output.py          cutting long text and listings
-  navigate.py        pages, history, tabs, frames
+  output.py          cutting long text and listings, writing files whole
+  navigate.py        pages, history, tabs, frames, the viewport
   examine.py         finding, describing, what can be done, the outline
   act.py             clicking, filling, keys, dropdowns, dragging, files, scripts
-  read.py            text, markup, attributes, links, screenshots, waiting
+  read.py            text, markup, attributes, links, screenshots, PDFs, waiting
   keep.py            cookies, local storage, intercepted requests, contexts
+  watch.py           logs, answering dialogs, downloads
   cli.py             pw-browse
   server/
     registry.py      the tools as a catalogue, no SDK

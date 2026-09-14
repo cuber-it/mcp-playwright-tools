@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from playwright.async_api import BrowserContext, Page
 
 from loopback import Issuer, Site, serve_issuer, serve_site
 from mcp_playwright_tools import Boundary, BrowserPool, Settings, Workspace, navigate
@@ -33,6 +34,7 @@ EXPECTED = {
     "where_am_i",
     "tabs",
     "use_frame",
+    "viewport",
     "find",
     "describe",
     "what_can_i_do",
@@ -52,7 +54,23 @@ EXPECTED = {
     "storage",
     "intercept",
     "contexts",
+    "logs",
+    "dialogs",
+    "downloads",
 }
+
+
+async def awaiting(
+    emitter: Page | BrowserContext, event: str, doing: Awaitable[Any]
+) -> Any:
+    """Do something and return the event it set off, once that has arrived.
+
+    The tools listen before the test does, so when this returns they have
+    seen the event as well.
+    """
+    async with emitter.expect_event(event) as happened:
+        await doing
+    return await happened.value
 
 
 @pytest.hookimpl(tryfirst=True)

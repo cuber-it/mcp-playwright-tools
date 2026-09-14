@@ -8,8 +8,8 @@ browser runs on, and it is checked for every path a tool resolves.
 
 | Access | Tools | `guarded` (default) | `strict` | `open` |
 |---|---|---|---|---|
-| reading | `open_url` with a `file:` address | anywhere | inside the roots | anywhere |
-| writing | `screenshot` with `save_to` | inside the roots | inside the roots | anywhere |
+| reading | `open_url` with a `file:` address, `contexts` opening a state file | anywhere | inside the roots | anywhere |
+| writing | `screenshot` and `downloads` with `save_to`, `contexts` saving a state file | inside the roots | inside the roots | anywhere |
 | uploading | `attach_files` | from the upload directories | from the upload directories | anywhere |
 
 - **The roots** are the home directory unless `--allowed-root` names others.
@@ -19,6 +19,8 @@ browser runs on, and it is checked for every path a tool resolves.
 - **`/tmp` is always within reach**, for every access and in every mode.
 - A `javascript:` address is refused by `open_url`; it runs a script, which is
   what `run_javascript` is for.
+- A saved state holds the cookies of a login, so `contexts` writes it readable
+  by its owner only.
 
 Empty roots or empty upload directories mean no limit for what they confine.
 That is how the library runs when a `Workspace` is built without a boundary.
@@ -44,7 +46,7 @@ It takes effect at the next tool call and lapses on its own; the server does not
 restart.
 
 ```bash
-scripts/grant.sh set --root ~/Downloads --for 30m  # uploads and screenshots reach it
+scripts/grant.sh set --root ~/Downloads --for 30m  # uploads and written files reach it
 scripts/grant.sh set --mode open --for 15m         # no limit at all
 scripts/grant.sh set --mode strict --for 1d        # reading confined as well
 scripts/grant.sh show
@@ -88,8 +90,8 @@ be absolute.
 
 - The file is written to a temporary name and renamed, so the server sees the
   old grant or the new one, never half of either.
-- The tools cannot write the file: a screenshot is refused for the file and
-  for its directory.
+- The tools cannot write the file: a screenshot, a download or a saved state
+  is refused for the file and for its directory.
 - A grant file that cannot be read or does not hold a valid grant makes every
   check fail with `GrantError` until it is fixed or removed with
   `scripts/grant.sh reset`.

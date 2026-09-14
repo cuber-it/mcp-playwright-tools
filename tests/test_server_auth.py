@@ -22,13 +22,13 @@ from typing import Any
 
 import pytest
 
+from conftest import EXPECTED
 from loopback import Issuer, free_port, serve_issuer
 
 REVISION = "2026-07-28"
 ACTIVE = {"active": True, "client_id": "claude", "scope": "user"}
 STARTUP_SECONDS = 20.0
 POLL_SECONDS = 0.05
-TOOL_COUNT = 24
 
 
 @dataclass(frozen=True)
@@ -170,7 +170,7 @@ def test_a_valid_token_gets_the_tools(served: Served) -> None:
     status, _, text = ask(served.base, "valid-token")
 
     assert status == 200
-    assert len(tool_names(text)) == TOOL_COUNT
+    assert tool_names(text) == EXPECTED
 
 
 def test_a_token_without_the_required_scope_is_forbidden(served: Served) -> None:

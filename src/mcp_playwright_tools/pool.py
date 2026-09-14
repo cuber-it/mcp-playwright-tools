@@ -12,6 +12,7 @@ name is a parameter of every tool.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from playwright.async_api import (
 from playwright.async_api import Error as PlaywrightError
 
 from mcp_playwright_tools.errors import ToolError, attempt, brief, unknown
+from mcp_playwright_tools.record import Record
 
 DEFAULT_CONTEXT = "default"
 BROWSERS = ("chromium", "firefox", "webkit")
@@ -72,6 +74,11 @@ class Settings:
         if self.idle < 0:
             raise ToolError(f"idle cannot be negative, not {self.idle:g}")
 
+    @property
+    def named(self) -> str:
+        """Return what the browser is called: its channel, or else its engine."""
+        return self.channel or self.browser
+
     @classmethod
     def read(cls, config: dict[str, Any]) -> Settings:
         """Return the settings a configuration mapping names.
@@ -95,27 +102,57 @@ class Settings:
 
 @dataclass
 class Session:
-    """One named context and the tabs open in it.
+    """One named context, the tabs open in it, and what happened there.
 
     Attributes:
         context: The browser context, isolated from the others.
         pages: Open tabs by their number.
         active: The tab the tools act on.
         next_tab: Number the next tab gets.
-        frame: Selector of the frame the tools act in, if any.
+        frame: Selector of the frame the tools act in, if any; the steps into
+            a frame inside a frame are joined with ``>>``.
         touched: When it was last used, as a monotonic reading.
+        record: What happened in the context, and how dialogs are answered.
     """
 
     context: BrowserContext
     pages: dict[int, Page] = field(default_factory=dict)
     active: int = 0
-    next_tab: int = 1
+    next_tab: int = 0
     frame: str | None = None
     touched: float = field(default_factory=time.monotonic)
+    record: Record = field(default_factory=Record)
 
     def idle_for(self) -> float:
         """Return how many seconds nobody has used this context."""
         return time.monotonic() - self.touched
+
+    def adopt(self, page: Page, timeout: float) -> int:
+        """Give a tab a number, follow it until it closes, and return the number.
+
+        A tab arrives twice, from the call that opened it and as an event of
+        the context; it keeps the number it got first.
+        """
+        for number, known in self.pages.items():
+            if known is page:
+                return number
+        number = self.next_tab
+        self.next_tab += 1
+        self.pages[number] = page
+        page.set_default_timeout(timeout * 1000)
+        page.on("close", lambda _closed: self.forget(number))
+        self.record.follow_page(page, number)
+        return number
+
+    def show(self, tab: int) -> None:
+        """Make a tab the one the tools act on, in the page itself."""
+        self.active = tab
+        self.frame = None
+
+    def forget(self, tab: int) -> None:
+        """Drop a closed tab; if it was the active one, the lowest other takes over."""
+        if self.pages.pop(tab, None) is not None and self.active == tab:
+            self.show(min(self.pages, default=0))
 
 
 @dataclass(frozen=True)
@@ -146,8 +183,11 @@ class Spot:
     @property
     def root(self) -> Page | FrameLocator:
         """Return what elements are looked for in: the tab, or a frame in it."""
-        frame = self.session.frame
-        return self.page.frame_locator(frame) if frame else self.page
+        root: Page | FrameLocator = self.page
+        if self.session.frame:
+            for step in self.session.frame.split(">>"):
+                root = root.frame_locator(step.strip())
+        return root
 
     @property
     def context(self) -> BrowserContext:
@@ -173,49 +213,72 @@ class BrowserPool:
             ToolError: The browser or a tab could not be opened.
         """
         session = await self.session(name)
-        page = session.pages.get(session.active)
-        if page is None or page.is_closed():
-            session.pages[session.active] = await self._new_page(session)
+        if session.active not in session.pages:
+            await self._open_tab(session)
         return Spot(session)
 
     async def session(self, name: str = DEFAULT_CONTEXT) -> Session:
         """Return the named context, opening it if it is not there.
 
         Raises:
-            ToolError: The browser could not be started.
+            ToolError: The browser or the context could not be started.
         """
         self._forget_lost_browser()
         found = self._sessions.get(name)
         if found is None:
-            browser = await self._started()
-            context = await attempt(browser.new_context(), f"open context {name!r}")
-            found = Session(context=context)
-            self._sessions[name] = found
-            logger.info("browser context %r opened", name)
+            found = await self._opened(name, {})
         found.touched = time.monotonic()
         self._start_sweeper()
         return found
+
+    async def open(
+        self, name: str, device: str = "", state: dict[str, Any] | None = None
+    ) -> Session:
+        """Open a context that passes for a device and holds a saved state.
+
+        Args:
+            name: The name the context goes by.
+            device: A device Playwright knows, such as ``iPhone 13``, or empty.
+            state: Cookies and storage as a saved state holds them, or None.
+
+        Raises:
+            ToolError: The context is already open, there is no such device,
+                or the browser or the context could not be started.
+        """
+        self._forget_lost_browser()
+        if name in self._sessions:
+            raise ToolError(f"context {name!r} is already open")
+        options = await self._emulating(device) if device else {}
+        if state is not None:
+            options["storage_state"] = state
+        await self._opened(name, options)
+        return await self.session(name)
 
     def sessions(self) -> dict[str, Session]:
         """Return the open contexts by name, without counting that as using them."""
         self._forget_lost_browser()
         return dict(sorted(self._sessions.items()))
 
+    def about(self) -> str:
+        """Return which browser runs, its version, and whether it has a window."""
+        if self._browser is None:
+            return "browser not started"
+        window = "headless" if self.settings.headless else "headed"
+        return f"browser {self.settings.named} {self._browser.version}, {window}"
+
     async def open_tab(self, name: str) -> int:
         """Open another tab in a context and make it the active one.
 
         Returns:
             The new tab's number.
+
+        Raises:
+            ToolError: The tab could not be opened.
         """
-        session = await self.session(name)
-        number = session.next_tab
-        session.pages[number] = await self._new_page(session)
-        session.active = number
-        session.next_tab += 1
-        return number
+        return await self._open_tab(await self.session(name))
 
     async def switch_tab(self, name: str, tab: int) -> None:
-        """Make another open tab the one the tools act on.
+        """Make another open tab the one the tools act on, in the page itself.
 
         Raises:
             ToolError: That tab is not open.
@@ -223,7 +286,7 @@ class BrowserPool:
         session = await self.session(name)
         if tab not in session.pages:
             raise ToolError(f"no tab {tab}; open: {sorted(session.pages)}")
-        session.active = tab
+        session.show(tab)
 
     async def close_tab(self, name: str, tab: int) -> None:
         """Close one tab; when it was the active one, the lowest other takes over.
@@ -236,9 +299,7 @@ class BrowserPool:
         if page is None:
             raise ToolError(f"no tab {tab}; open: {sorted(session.pages)}")
         await attempt(page.close(), f"close tab {tab}")
-        del session.pages[tab]
-        if session.active == tab:
-            session.active = min(session.pages, default=0)
+        session.forget(tab)
 
     async def close(self, name: str) -> bool:
         """Close one context with its tabs, and the browser with the last one.
@@ -316,7 +377,7 @@ class BrowserPool:
         options: dict[str, Any] = {"headless": settings.headless}
         if settings.channel:
             options["channel"] = settings.channel
-        named = settings.channel or settings.browser
+        named = settings.named
         try:
             if self._playwright is None:
                 self._playwright = await async_playwright().start()
@@ -328,15 +389,60 @@ class BrowserPool:
         logger.info("browser %s started, headless=%s", named, settings.headless)
         return self._browser
 
-    async def _new_page(self, session: Session) -> Page:
-        """Open a tab in a context with the action timeout set.
+    async def _emulating(self, device: str) -> dict[str, Any]:
+        """Return the context options that let the browser pass for a device.
+
+        Raises:
+            ToolError: The browser could not be started, or there is no such
+                device; a browser started for nothing is stopped again.
+        """
+        await self._started()
+        devices = self._playwright.devices
+        if device not in devices:
+            await self._stop_if_empty()
+            raise unknown("device", device, devices)
+        return {
+            key: value
+            for key, value in devices[device].items()
+            if key != "default_browser_type"
+        }
+
+    async def _opened(self, name: str, options: dict[str, Any]) -> Session:
+        """Open a context and follow it and every tab it will have.
+
+        Raises:
+            ToolError: The browser or the context could not be started; a
+                browser started for nothing is stopped again.
+        """
+        browser = await self._started()
+        try:
+            context = await attempt(
+                browser.new_context(**options), f"open context {name!r}"
+            )
+        except ToolError:
+            await self._stop_if_empty()
+            raise
+        session = Session(context=context)
+        context.on("page", functools.partial(self._arrived, session))
+        session.record.follow_context(context)
+        self._sessions[name] = session
+        logger.info("browser context %r opened", name)
+        return session
+
+    def _arrived(self, session: Session, page: Page) -> None:
+        """Make a tab the context opened, for a tool or a page, the active one."""
+        session.show(session.adopt(page, self.settings.timeout))
+
+    async def _open_tab(self, session: Session) -> int:
+        """Open a tab in a context and make it the active one; return its number.
 
         Raises:
             ToolError: The tab could not be opened.
         """
         page = await attempt(session.context.new_page(), "open a tab")
-        page.set_default_timeout(self.settings.timeout * 1000)
-        return page
+        number = session.adopt(page, self.settings.timeout)
+        session.show(number)
+        return number
 
     async def _shut(self, name: str, session: Session) -> bool:
         """Close one context with its tabs.

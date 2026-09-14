@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Any
 
 from playwright.async_api import Route
 
+from mcp_playwright_tools.boundary import Access
 from mcp_playwright_tools.errors import ToolError, attempt, unknown
-from mcp_playwright_tools.output import cut
-from mcp_playwright_tools.pool import Spot
+from mcp_playwright_tools.output import cut, stored
+from mcp_playwright_tools.pool import BrowserPool, Spot
 from mcp_playwright_tools.workspace import Browsing, Workspace
 
 KINDS = ("cookies", "local")
 STORE_ACTIONS = ("get", "set", "clear")
 ROUTE_ACTIONS = ("mock", "abort", "clear")
-CONTEXT_ACTIONS = ("list", "close")
+CONTEXT_ACTIONS = ("list", "open", "save", "close")
+# A state file holds the cookies of a login.
+PRIVATE = 0o600
 MAX_COOKIES = 100
 
 
@@ -79,28 +84,106 @@ async def intercept(
     return f"no longer interfering with {pattern}"
 
 
-async def contexts(space: Workspace, action: str = "list", name: str = "") -> str:
-    """List the open contexts, or close one, or close all and stop the browser.
+async def contexts(
+    space: Workspace,
+    action: str = "list",
+    name: str = "",
+    device: str = "",
+    state: str = "",
+) -> str:
+    """List, open, save or close contexts.
+
+    ``open`` starts the context ``name``, passing for ``device`` and holding the
+    cookies and storage of the file ``state`` when they are given; ``save``
+    writes those of an open context to ``state``. ``close`` without a name
+    closes every context and the browser.
 
     Raises:
-        ToolError: There is no such action, or a context did not close cleanly.
+        OutsideBoundaryError: The state file lies where it may not be read or
+            written.
+        NotPermittedError: Saving would write the grant file.
+        ToolError: There is no such action, a needed name or state file is
+            missing or unusable, or a context could not be opened, saved or
+            closed cleanly.
     """
     pool = space.pool
     if action == "list":
-        found = pool.sessions()
-        if not found:
-            return "no browser context is open"
-        return "\n".join(
-            f"{named}: {len(session.pages)} tab(s), active {session.active}, "
-            f"idle {session.idle_for():.0f}s"
-            for named, session in found.items()
-        )
+        return _listing(pool)
+    if action == "open":
+        return await _opening(space, name, device, state)
+    if action == "save":
+        return await _saving(space, name, state)
     if action == "close":
         if not name:
             return f"closed {await pool.close_all()} context(s), browser stopped"
         closed = await pool.close(name)
         return f"closed context {name!r}" if closed else f"no context {name!r}"
     raise unknown("action", action, CONTEXT_ACTIONS)
+
+
+def _listing(pool: BrowserPool) -> str:
+    """Return the browser, then each open context with its tabs and idle time."""
+    found = pool.sessions()
+    if not found:
+        return "no browser context is open"
+    rows = [
+        f"{named}: {len(session.pages)} tab(s), active {session.active}, "
+        f"idle {session.idle_for():.0f}s"
+        for named, session in found.items()
+    ]
+    return "\n".join([pool.about(), *rows])
+
+
+async def _opening(space: Workspace, name: str, device: str, state: str) -> str:
+    """Open a context, as a device and from a state file as far as they are given.
+
+    Raises:
+        OutsideBoundaryError: The state file lies where it may not be read.
+        ToolError: The name is missing, the state file cannot be read, or the
+            context could not be opened.
+    """
+    if not name:
+        raise ToolError("opening a context needs a name")
+    source = space.resolve(state) if state else None
+    await space.pool.open(name, device, None if source is None else _state(source))
+    said = f"opened context {name!r}"
+    if device:
+        said += f" as {device}"
+    if source is not None:
+        said += f" with the state from {source}"
+    return said
+
+
+async def _saving(space: Workspace, name: str, state: str) -> str:
+    """Write the cookies and storage of an open context to a file only its owner reads.
+
+    Raises:
+        OutsideBoundaryError: The file lies where it may not be written.
+        NotPermittedError: The file would be the grant file.
+        ToolError: The name or the file is missing, no such context is open,
+            or the state could not be taken or written.
+    """
+    if not name or not state:
+        raise ToolError("saving a context needs its name and a state file")
+    destination = space.resolve(state, Access.WRITE)
+    session = space.pool.sessions().get(name)
+    if session is None:
+        raise ToolError(f"no context {name!r}")
+    held = await attempt(session.context.storage_state(), f"save context {name!r}")
+    stored(destination, json.dumps(held, indent=2).encode(), PRIVATE)
+    return f"saved context {name!r} to {destination}"
+
+
+def _state(source: Path) -> dict[str, Any]:
+    """Return what a state file holds.
+
+    Raises:
+        ToolError: The file cannot be read or holds no JSON.
+    """
+    try:
+        return json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        raise ToolError(f"could not read the state file {source}: {err}") from err
 
 
 async def _cookies(spot: Spot, action: str, payload: str) -> str:
