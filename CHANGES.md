@@ -1,5 +1,15 @@
 # Changes
 
+## 8.0.2 (c783ad1)
+
+- `what_can_i_do`, `read` with `links` and `read` with `html` and no target work
+  in the frame chosen with `use_frame`, like the other tools, instead of the
+  page around it
+- `what_can_i_do` lists controls fixed on the screen, such as cookie banners;
+  it asks for rendered boxes instead of `offsetParent`
+- More than 100 cookies say how many were left out; the local storage is cut
+  like other long output and says so
+
 ## 8.0.1 (3df41d7)
 
 - When the browser went away, closing a context, closing all of them and the
