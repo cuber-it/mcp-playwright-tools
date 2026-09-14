@@ -1,5 +1,10 @@
 # Changes
 
+## 8.0.1 (3df41d7)
+
+- When the browser went away, closing a context, closing all of them and the
+  idle sweep forget its contexts instead of failing to close them
+
 ## 09b170b
 
 - Grants only for what is dangerous on the machine: `run_javascript` runs
